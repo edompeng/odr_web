@@ -1,0 +1,6 @@
+build/
+build_wasm/
+dist/
+
+.DS_Store
+*.log

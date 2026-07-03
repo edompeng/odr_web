@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ODR Web Viewer</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar" aria-label="地图控制">
+        <section class="brand">
+          <div>
+            <h1>ODR Web Viewer</h1>
+            <p>OpenDRIVE 静态查看工具</p>
+          </div>
+          <button id="fitViewButton" class="icon-button" title="适配视图" aria-label="适配视图">⌖</button>
+        </section>
+
+        <section class="tool-block">
+          <label class="file-drop" id="fileDrop">
+            <input id="fileInput" type="file" accept=".xodr,.xml,application/xml,text/xml" />
+            <span>打开 .xodr / .xml</span>
+          </label>
+          <div class="button-row">
+            <button id="sampleButton" type="button">加载示例</button>
+            <button id="screenshotButton" type="button">导出截图</button>
+          </div>
+        </section>
+
+        <section class="tool-block">
+          <div class="segmented" role="group" aria-label="视图模式">
+            <button id="view2dButton" class="active" type="button">2D</button>
+            <button id="view3dButton" type="button">3D</button>
+          </div>
+          <label class="toggle-row">
+            <input id="measureToggle" type="checkbox" />
+            <span>测距模式</span>
+          </label>
+        </section>
+
+        <section class="tool-block">
+          <h2>图层</h2>
+          <div id="layerList" class="layer-list"></div>
+        </section>
+
+        <section class="tool-block tree-block">
+          <h2>地图层级</h2>
+          <input id="searchInput" class="search-input" type="search" placeholder="搜索 road / lane / object / signal" />
+          <div id="treeList" class="tree-list" role="tree"></div>
+        </section>
+      </aside>
+
+      <section class="viewer-panel">
+        <canvas id="mapCanvas"></canvas>
+        <div id="dropOverlay" class="drop-overlay">松开以加载 OpenDRIVE 文件</div>
+        <div class="statusbar">
+          <span id="mapStatus">未加载地图</span>
+          <span id="hoverStatus">x: -, y: -, s: -</span>
+          <span id="measureStatus">测距: 0.00 m</span>
+        </div>
+        <section id="detailsPanel" class="details-panel" aria-label="元素信息">
+          <div class="details-header">
+            <strong id="detailsTitle">元素信息</strong>
+            <button id="clearSelectionButton" class="icon-button" title="清除选择" aria-label="清除选择">×</button>
+          </div>
+          <pre id="detailsContent">选择道路、车道、对象或信号后显示属性。</pre>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
