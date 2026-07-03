@@ -14,9 +14,15 @@ export class WasmBackedOpenDriveParser {
       return this.fallback.parse(text, fileName);
     }
     this.mode = "wasm";
-    const parsed = JSON.parse(module.parseOpenDriveToJson(text, fileName));
-    if (parsed?.error) throw new Error(parsed.error);
-    return parsed;
+    try {
+      const parsed = JSON.parse(module.parseOpenDriveToJson(text, fileName));
+      if (parsed?.error) throw new Error(parsed.error);
+      return parsed;
+    } catch (error) {
+      console.warn("WASM parser failed; falling back to JavaScript parser.", error);
+      this.mode = "javascript";
+      return this.fallback.parse(text, fileName);
+    }
   }
 
   async loadModule() {
