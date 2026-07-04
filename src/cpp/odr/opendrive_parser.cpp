@@ -478,7 +478,8 @@ OpenDriveMap OpenDriveParser::Parse(const std::string& xml,
     ParseObjectsAndSignals(*road_node, &road);
     road.bounds = BoundsOf(road.reference_line);
     for (const Lane& lane : road.lanes) MergeBounds(&road.bounds, lane.bounds);
-    MergeBounds(&map.bounds, road.bounds);
+    if (HasValidBounds(road.bounds)) MergeBounds(&map.bounds, road.bounds);
+    road.bounds = NormalizeBounds(road.bounds);
     map.stats.length_meters += road.length;
     map.stats.lanes += static_cast<int>(
         std::count_if(road.lanes.begin(), road.lanes.end(),
@@ -495,6 +496,7 @@ OpenDriveMap OpenDriveParser::Parse(const std::string& xml,
   map.stats.objects = static_cast<int>(map.objects.size());
   map.stats.signals = static_cast<int>(map.signals.size());
   map.stats.junctions = static_cast<int>(map.junctions.size());
+  map.bounds = NormalizeBounds(map.bounds);
   return map;
 }
 

@@ -68,6 +68,21 @@ const char kSectionedRoad[] = R"xml(<?xml version="1.0" encoding="UTF-8"?>
   </road>
 </OpenDRIVE>)xml";
 
+const char kMixedEmptyRoad[] = R"xml(<?xml version="1.0" encoding="UTF-8"?>
+<OpenDRIVE>
+  <road name="Valid" length="20" id="1" junction="-1">
+    <planView>
+      <geometry s="0" x="500000" y="3000000" hdg="0" length="20"><line/></geometry>
+    </planView>
+    <lanes>
+      <laneSection s="0">
+        <center><lane id="0" type="none" level="false"/></center>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Empty" length="10" id="2" junction="-1"/>
+</OpenDRIVE>)xml";
+
 void Check(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
@@ -131,6 +146,20 @@ void TestLaneSectionsAreClippedAndVariableWidth() {
   Check(second_left.bounds.max_y > 2.9, "variable width not sampled");
 }
 
+void TestMapBoundsIgnoreEmptyRoads() {
+  const odrweb::OpenDriveMap map =
+      odrweb::OpenDriveParser().Parse(kMixedEmptyRoad, "large.xodr");
+  Check(map.bounds.min_x > 499990.0, "map bounds were skewed toward origin");
+  Check(map.bounds.max_x < 500030.0, "map bounds max x mismatch");
+  Check(map.bounds.min_y > 2999990.0, "map bounds min y mismatch");
+  Check(map.bounds.max_y < 3000010.0, "map bounds max y mismatch");
+
+  const std::string json =
+      odrweb::ParseOpenDriveToJson(kMixedEmptyRoad, "large.xodr");
+  Check(json.find("1e+100") == std::string::npos,
+        "invalid bounds sentinel leaked to JSON");
+}
+
 }  // namespace
 
 int main() {
@@ -138,6 +167,7 @@ int main() {
   TestGeometryAndLaneMesh();
   TestJsonExport();
   TestLaneSectionsAreClippedAndVariableWidth();
+  TestMapBoundsIgnoreEmptyRoads();
   std::cout << "opendrive_parser_test passed\n";
   return 0;
 }

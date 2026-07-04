@@ -6,7 +6,7 @@ import {
   segmentPolylineByS,
   widthAt,
 } from "./opendriveGeometry.js";
-import { boundsOf, mergeBounds } from "./math.js";
+import { boundsOf, hasValidBounds, mergeBounds } from "./math.js";
 
 const LANE_COLORS = new Map([
   ["driving", "#335f78"],
@@ -201,6 +201,15 @@ function projectRoadPoint(road, s, t) {
   };
 }
 
+function hasRenderableGeometry(road) {
+  return (
+    road.referenceLine.length > 0 ||
+    road.lanes.some((lane) => lane.polygon.length > 0 || lane.centerline.length > 0) ||
+    road.objects.length > 0 ||
+    road.signals.length > 0
+  );
+}
+
 export class OpenDriveParser {
   parse(text, fileName = "untitled.xodr") {
     const doc = new DOMParser().parseFromString(text, "application/xml");
@@ -243,7 +252,12 @@ export class OpenDriveParser {
     const objects = roads.flatMap((road) => road.objects);
     const signals = roads.flatMap((road) => road.signals);
     const junctions = parseJunctions(doc);
-    const bounds = mergeBounds(roads.map((road) => road.bounds));
+    const bounds = mergeBounds(
+      roads
+        .filter(hasRenderableGeometry)
+        .map((road) => road.bounds)
+        .filter(hasValidBounds),
+    );
 
     return {
       fileName,

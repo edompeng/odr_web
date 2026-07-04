@@ -1,6 +1,7 @@
 import {
   boundsOf,
   formatMeters,
+  hasValidBounds,
   mergeBounds,
   pointToPolylineDistance,
   polygonContains,
@@ -64,7 +65,7 @@ export class CanvasRenderer {
   }
 
   fitToBounds(bounds = this.map?.bounds) {
-    if (!bounds) return;
+    if (!hasValidBounds(bounds)) return;
     const width = this.canvas.width / this.devicePixelRatio;
     const height = this.canvas.height / this.devicePixelRatio;
     const dx = Math.max(1, bounds.maxX - bounds.minX);

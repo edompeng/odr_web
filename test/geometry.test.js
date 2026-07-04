@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { pointToPolylineDistance, polygonContains, polylineLength } from "../src/domain/math.js";
+import {
+  boundsOf,
+  hasValidBounds,
+  mergeBounds,
+  pointToPolylineDistance,
+  polygonContains,
+  polylineLength,
+} from "../src/domain/math.js";
 import {
   lanePolygonFromCenterline,
   lanePolygonFromOffsets,
@@ -59,6 +66,16 @@ test("polyline helpers support measurement and picking", () => {
   ];
   assert.equal(polylineLength(points), 8);
   assert.equal(pointToPolylineDistance({ x: 3, y: 6 }, points), 2);
+});
+
+test("bounds helpers skip empty geometry until a fallback is required", () => {
+  const empty = boundsOf([]);
+  assert.equal(hasValidBounds(empty), false);
+
+  const merged = mergeBounds([empty, { minX: 1000, minY: 2000, maxX: 1010, maxY: 2020 }]);
+  assert.deepEqual(merged, { minX: 1000, minY: 2000, maxX: 1010, maxY: 2020 });
+
+  assert.deepEqual(mergeBounds([empty]), { minX: -10, minY: -10, maxX: 10, maxY: 10 });
 });
 
 test("segments reference line and supports variable lane offsets", () => {

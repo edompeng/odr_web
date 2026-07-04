@@ -18,8 +18,19 @@ inline void ExtendBounds(Bounds* bounds, const Point& point) {
   bounds->max_y = std::max(bounds->max_y, point.y);
 }
 
+inline bool HasValidBounds(const Bounds& bounds) {
+  return std::isfinite(bounds.min_x) && std::isfinite(bounds.min_y) &&
+         std::isfinite(bounds.max_x) && std::isfinite(bounds.max_y) &&
+         bounds.min_x <= bounds.max_x && bounds.min_y <= bounds.max_y;
+}
+
+inline Bounds NormalizeBounds(const Bounds& bounds) {
+  if (HasValidBounds(bounds)) return bounds;
+  return {-10.0, -10.0, 10.0, 10.0};
+}
+
 inline void MergeBounds(Bounds* out, const Bounds& in) {
-  if (!std::isfinite(in.min_x)) return;
+  if (!HasValidBounds(in)) return;
   out->min_x = std::min(out->min_x, in.min_x);
   out->min_y = std::min(out->min_y, in.min_y);
   out->max_x = std::max(out->max_x, in.max_x);

@@ -33,14 +33,11 @@ export function boundsOf(points) {
     bounds.maxX = Math.max(bounds.maxX, p.x);
     bounds.maxY = Math.max(bounds.maxY, p.y);
   }
-  if (!Number.isFinite(bounds.minX)) {
-    return { minX: -10, minY: -10, maxX: 10, maxY: 10 };
-  }
   return bounds;
 }
 
 export function mergeBounds(boundsList) {
-  return boundsList.reduce(
+  const merged = boundsList.filter(hasValidBounds).reduce(
     (out, b) => ({
       minX: Math.min(out.minX, b.minX),
       minY: Math.min(out.minY, b.minY),
@@ -54,6 +51,23 @@ export function mergeBounds(boundsList) {
       maxY: Number.NEGATIVE_INFINITY,
     },
   );
+  return normalizeBounds(merged);
+}
+
+export function hasValidBounds(bounds) {
+  return (
+    bounds &&
+    Number.isFinite(bounds.minX) &&
+    Number.isFinite(bounds.minY) &&
+    Number.isFinite(bounds.maxX) &&
+    Number.isFinite(bounds.maxY) &&
+    bounds.minX <= bounds.maxX &&
+    bounds.minY <= bounds.maxY
+  );
+}
+
+export function normalizeBounds(bounds, fallback = { minX: -10, minY: -10, maxX: 10, maxY: 10 }) {
+  return hasValidBounds(bounds) ? bounds : { ...fallback };
 }
 
 export function pointToSegmentDistance(point, a, b) {
