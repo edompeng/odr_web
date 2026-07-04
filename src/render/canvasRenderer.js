@@ -56,6 +56,10 @@ export class CanvasRenderer {
   setLayerVisible(id, visible) {
     const layer = this.layers.get(id);
     if (layer) layer.visible = visible;
+    if (!visible) {
+      if (hitLayerId(this.hovered) === id) this.hovered = null;
+      if (hitLayerId(this.selected) === id) this.selected = null;
+    }
     this.draw();
   }
 
@@ -122,42 +126,50 @@ export class CanvasRenderer {
     const tolerance = 10 / this.camera.zoom;
     const pickBounds = pointBounds(world, tolerance);
 
-    for (const road of this.map.roads) {
-      if (!boundsIntersects(road.bounds, pickBounds)) continue;
-      for (const lane of road.lanes) {
-        if (!boundsIntersects(lane.bounds, pickBounds)) continue;
-        if (lane.polygon.length > 2 && polygonContains(world, lane.polygon)) {
-          return { kind: "lane", road, lane, point: world };
+    if (this.layers.get("lanes")?.visible) {
+      for (const road of this.map.roads) {
+        if (!boundsIntersects(road.bounds, pickBounds)) continue;
+        for (const lane of road.lanes) {
+          if (!boundsIntersects(lane.bounds, pickBounds)) continue;
+          if (lane.polygon.length > 2 && polygonContains(world, lane.polygon)) {
+            return { kind: "lane", road, lane, point: world };
+          }
         }
       }
     }
 
     let best = null;
-    for (const signal of this.map.signals) {
-      if (
-        signal.shape?.length > 2 &&
-        boundsIntersects(signal.bounds, pickBounds) &&
-        polygonContains(world, signal.shape)
-      ) {
-        return { kind: "signal", signal, distance: 0, point: world };
+    if (this.layers.get("signals")?.visible) {
+      for (const signal of this.map.signals) {
+        if (
+          signal.shape?.length > 2 &&
+          boundsIntersects(signal.bounds, pickBounds) &&
+          polygonContains(world, signal.shape)
+        ) {
+          return { kind: "signal", signal, distance: 0, point: world };
+        }
+        const d = Math.hypot(signal.point.x - world.x, signal.point.y - world.y);
+        if (d < tolerance && (!best || d < best.distance)) best = { kind: "signal", signal, distance: d, point: world };
       }
-      const d = Math.hypot(signal.point.x - world.x, signal.point.y - world.y);
-      if (d < tolerance && (!best || d < best.distance)) best = { kind: "signal", signal, distance: d, point: world };
     }
-    for (const object of this.map.objects) {
-      if (
-        object.outline?.length > 2 &&
-        boundsIntersects(object.bounds, pickBounds) &&
-        polygonContains(world, object.outline)
-      ) {
-        return { kind: "object", object, distance: 0, point: world };
+    if (this.layers.get("objects")?.visible) {
+      for (const object of this.map.objects) {
+        if (
+          object.outline?.length > 2 &&
+          boundsIntersects(object.bounds, pickBounds) &&
+          polygonContains(world, object.outline)
+        ) {
+          return { kind: "object", object, distance: 0, point: world };
+        }
+        const d = Math.hypot(object.point.x - world.x, object.point.y - world.y);
+        if (d < tolerance && (!best || d < best.distance)) best = { kind: "object", object, distance: d, point: world };
       }
-      const d = Math.hypot(object.point.x - world.x, object.point.y - world.y);
-      if (d < tolerance && (!best || d < best.distance)) best = { kind: "object", object, distance: d, point: world };
     }
-    for (const road of this.map.roads) {
-      const d = pointToPolylineDistance(world, road.referenceLine);
-      if (d < tolerance && (!best || d < best.distance)) best = { kind: "road", road, distance: d, point: world };
+    if (this.layers.get("referenceLines")?.visible) {
+      for (const road of this.map.roads) {
+        const d = pointToPolylineDistance(world, road.referenceLine);
+        if (d < tolerance && (!best || d < best.distance)) best = { kind: "road", road, distance: d, point: world };
+      }
     }
     return best;
   }
@@ -452,6 +464,15 @@ function hitIdentity(hit) {
   if (hit.kind === "signal") return `signal:${hit.signal.key}`;
   if (hit.kind === "object") return `object:${hit.object.key}`;
   return hit.kind;
+}
+
+function hitLayerId(hit) {
+  if (!hit) return "";
+  if (hit.kind === "lane") return "lanes";
+  if (hit.kind === "road") return "referenceLines";
+  if (hit.kind === "signal") return "signals";
+  if (hit.kind === "object") return "objects";
+  return "";
 }
 
 function boundsIntersects(a, b) {

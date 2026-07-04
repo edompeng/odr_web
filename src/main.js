@@ -1,4 +1,4 @@
-import { WasmBackedOpenDriveParser } from "./domain/wasmParser.js";
+import { WorkerBackedOpenDriveParser } from "./domain/workerParser.js";
 import { CoordinateFormatter } from "./domain/coordinates.js";
 import { formatMeters } from "./domain/math.js";
 import { CanvasRenderer } from "./render/canvasRenderer.js";
@@ -44,7 +44,7 @@ const SAMPLE_ODR = `<?xml version="1.0" encoding="UTF-8"?>
 
 class OdrViewerApp {
   constructor() {
-    this.parser = new WasmBackedOpenDriveParser();
+    this.parser = new WorkerBackedOpenDriveParser();
     this.renderer = new CanvasRenderer(document.querySelector("#mapCanvas"));
     this.coordinateFormatter = new CoordinateFormatter();
     this.treeNodes = [];
@@ -185,13 +185,13 @@ class OdrViewerApp {
     if (!file) return;
     const generation = ++this.loadGeneration;
     this.el.mapStatus.textContent = `${file.name} | 正在读取...`;
-    const text = await file.text();
-    await this.loadText(text, file.name, generation);
+    const buffer = await file.arrayBuffer();
+    await this.loadText(buffer, file.name, generation);
   }
 
   async loadText(text, fileName, generation = ++this.loadGeneration) {
     try {
-      this.el.mapStatus.textContent = `${fileName} | 正在解析...`;
+      this.el.mapStatus.textContent = `${fileName} | 后台解析中...`;
       const map = await this.parser.parse(text, fileName);
       if (generation !== this.loadGeneration) return;
       this.coordinateFormatter.setMap(map);

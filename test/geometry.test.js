@@ -94,6 +94,17 @@ test("coordinate formatter switches between UTM and longitude latitude display",
   assert.deepEqual(formatter.point({ x: 1, y: 2 }), { easting: 1, northing: 2 });
 });
 
+test("coordinate formatter supports Transverse Mercator geoReference", () => {
+  const formatter = new CoordinateFormatter({
+    header: { geoReference: "+proj=tmerc +lat_0=0 +lon_0=117 +k=1 +x_0=500000 +y_0=0 +datum=WGS84" },
+  });
+  formatter.setMode("lonlat");
+  const point = formatter.point({ x: 500000, y: 0 });
+  assert.equal(formatter.canUseLonLat(), true);
+  assert.ok(Math.abs(point.longitude - 117) < 1e-6);
+  assert.ok(Math.abs(point.latitude) < 1e-6);
+});
+
 test("segments reference line and supports variable lane offsets", () => {
   const centerline = [
     { x: 0, y: 0, hdg: 0, s: 0 },

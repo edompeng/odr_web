@@ -6,25 +6,25 @@ const UTM_K0 = 0.9996;
 export class CoordinateFormatter {
   constructor(map = null) {
     this.mode = "utm";
-    this.utm = parseUtmProjection(map?.header?.geoReference ?? "");
+    this.projection = parseProjection(map?.header?.geoReference ?? "");
   }
 
   setMap(map) {
-    this.utm = parseUtmProjection(map?.header?.geoReference ?? "");
+    this.projection = parseProjection(map?.header?.geoReference ?? "");
   }
 
   setMode(mode) {
-    this.mode = mode === "lonlat" && this.utm ? "lonlat" : "utm";
+    this.mode = mode === "lonlat" && this.projection ? "lonlat" : "utm";
   }
 
   canUseLonLat() {
-    return Boolean(this.utm);
+    return Boolean(this.projection);
   }
 
   point(point) {
     if (!point) return {};
-    if (this.mode === "lonlat" && this.utm) {
-      const lonLat = utmToLonLat(point.x, point.y, this.utm);
+    if (this.mode === "lonlat" && this.projection) {
+      const lonLat = transverseMercatorToLonLat(point.x, point.y, this.projection);
       return {
         longitude: round(lonLat.longitude, 8),
         latitude: round(lonLat.latitude, 8),
@@ -42,7 +42,7 @@ export class CoordinateFormatter {
 
   status(point) {
     const display = this.point(point);
-    if (this.mode === "lonlat" && this.utm) {
+    if (this.mode === "lonlat" && this.projection) {
       return `lon: ${display.longitude.toFixed(8)}, lat: ${display.latitude.toFixed(8)}`;
     }
     return `E: ${display.easting.toFixed(3)}, N: ${display.northing.toFixed(3)}`;
@@ -70,11 +70,29 @@ function isPoint(value) {
   return Number.isFinite(value.x) && Number.isFinite(value.y);
 }
 
-function parseUtmProjection(geoReference) {
+function parseProjection(geoReference) {
   const proj = tokenValue(geoReference, "proj");
-  const zone = Number(tokenValue(geoReference, "zone"));
-  if (proj !== "utm" || !Number.isInteger(zone) || zone < 1 || zone > 60) return null;
-  return { zone, south: /\+south(?:\s|$)/.test(geoReference) };
+  if (proj === "utm") {
+    const zone = Number(tokenValue(geoReference, "zone"));
+    if (!Number.isInteger(zone) || zone < 1 || zone > 60) return null;
+    return {
+      latitudeOrigin: 0,
+      longitudeOrigin: ((zone - 1) * 6 - 180 + 3) * (Math.PI / 180),
+      falseEasting: 500000,
+      falseNorthing: /\+south(?:\s|$)/.test(geoReference) ? 10000000 : 0,
+      scale: UTM_K0,
+    };
+  }
+  if (proj === "tmerc") {
+    return {
+      latitudeOrigin: numberToken(geoReference, "lat_0", 0) * (Math.PI / 180),
+      longitudeOrigin: numberToken(geoReference, "lon_0", 0) * (Math.PI / 180),
+      falseEasting: numberToken(geoReference, "x_0", 0),
+      falseNorthing: numberToken(geoReference, "y_0", 0),
+      scale: numberToken(geoReference, "k", numberToken(geoReference, "k_0", 1)),
+    };
+  }
+  return null;
 }
 
 function tokenValue(text, key) {
@@ -82,10 +100,14 @@ function tokenValue(text, key) {
   return match?.[1] ?? "";
 }
 
-function utmToLonLat(easting, northing, projection) {
-  const x = easting - 500000.0;
-  const y = projection.south ? northing - 10000000.0 : northing;
-  const m = y / UTM_K0;
+function numberToken(text, key, fallback) {
+  const value = Number(tokenValue(text, key));
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function transverseMercatorToLonLat(easting, northing, projection) {
+  const x = easting - projection.falseEasting;
+  const m = meridionalArc(projection.latitudeOrigin) + (northing - projection.falseNorthing) / projection.scale;
   const mu =
     m /
     (WGS84_A *
@@ -106,7 +128,7 @@ function utmToLonLat(easting, northing, projection) {
   const r1 = (WGS84_A * (1 - WGS84_E2)) / (1 - WGS84_E2 * sinPhi1 * sinPhi1) ** 1.5;
   const t1 = tanPhi1 * tanPhi1;
   const c1 = ePrime2 * cosPhi1 * cosPhi1;
-  const d = x / (n1 * UTM_K0);
+  const d = x / (n1 * projection.scale);
 
   const latitude =
     phi1 -
@@ -116,9 +138,8 @@ function utmToLonLat(easting, northing, projection) {
         ((5 + 3 * t1 + 10 * c1 - 4 * c1 ** 2 - 9 * ePrime2) * d ** 4) / 24 +
         ((61 + 90 * t1 + 298 * c1 + 45 * t1 ** 2 - 252 * ePrime2 - 3 * c1 ** 2) * d ** 6) / 720);
 
-  const longitudeOrigin = ((projection.zone - 1) * 6 - 180 + 3) * (Math.PI / 180);
   const longitude =
-    longitudeOrigin +
+    projection.longitudeOrigin +
     (d -
       ((1 + 2 * t1 + c1) * d ** 3) / 6 +
       ((5 - 2 * c1 + 28 * t1 - 3 * c1 ** 2 + 8 * ePrime2 + 24 * t1 ** 2) * d ** 5) / 120) /
@@ -128,6 +149,17 @@ function utmToLonLat(easting, northing, projection) {
     longitude: longitude * (180 / Math.PI),
     latitude: latitude * (180 / Math.PI),
   };
+}
+
+function meridionalArc(latitude) {
+  return (
+    WGS84_A *
+    ((1 - WGS84_E2 / 4 - (3 * WGS84_E2 ** 2) / 64 - (5 * WGS84_E2 ** 3) / 256) * latitude -
+      ((3 * WGS84_E2) / 8 + (3 * WGS84_E2 ** 2) / 32 + (45 * WGS84_E2 ** 3) / 1024) *
+        Math.sin(2 * latitude) +
+      ((15 * WGS84_E2 ** 2) / 256 + (45 * WGS84_E2 ** 3) / 1024) * Math.sin(4 * latitude) -
+      ((35 * WGS84_E2 ** 3) / 3072) * Math.sin(6 * latitude))
+  );
 }
 
 function round(value, decimals) {
