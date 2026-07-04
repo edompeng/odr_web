@@ -134,10 +134,24 @@ export class CanvasRenderer {
 
     let best = null;
     for (const signal of this.map.signals) {
+      if (
+        signal.shape?.length > 2 &&
+        boundsIntersects(signal.bounds, pickBounds) &&
+        polygonContains(world, signal.shape)
+      ) {
+        return { kind: "signal", signal, distance: 0, point: world };
+      }
       const d = Math.hypot(signal.point.x - world.x, signal.point.y - world.y);
       if (d < tolerance && (!best || d < best.distance)) best = { kind: "signal", signal, distance: d, point: world };
     }
     for (const object of this.map.objects) {
+      if (
+        object.outline?.length > 2 &&
+        boundsIntersects(object.bounds, pickBounds) &&
+        polygonContains(world, object.outline)
+      ) {
+        return { kind: "object", object, distance: 0, point: world };
+      }
       const d = Math.hypot(object.point.x - world.x, object.point.y - world.y);
       if (d < tolerance && (!best || d < best.distance)) best = { kind: "object", object, distance: d, point: world };
     }
@@ -295,9 +309,20 @@ export class CanvasRenderer {
   drawObjects(ctx) {
     const pad = 8 / this.camera.zoom;
     for (const object of this.map.objects) {
+      ctx.fillStyle = "#d59b62";
+      ctx.strokeStyle = "rgba(245, 207, 160, 0.9)";
+      ctx.lineWidth = Math.max(1, Math.min(2, this.camera.zoom * 0.04));
+      if (object.outline?.length >= 3) {
+        if (!boundsIntersects(object.bounds, this.viewBounds)) continue;
+        drawPolygon(ctx, object.outline, (p) => this.worldToScreen(p));
+        ctx.globalAlpha = 0.72;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.stroke();
+        continue;
+      }
       if (!pointInBounds(object.point, this.viewBounds, pad)) continue;
       const p = this.worldToScreen(object.point);
-      ctx.fillStyle = "#d59b62";
       ctx.fillRect(p.x - 4, p.y - 4, 8, 8);
     }
   }
@@ -305,9 +330,20 @@ export class CanvasRenderer {
   drawSignals(ctx) {
     const pad = 8 / this.camera.zoom;
     for (const signal of this.map.signals) {
+      ctx.fillStyle = "#ef6f6c";
+      ctx.strokeStyle = "#ffb0ad";
+      ctx.lineWidth = Math.max(1, Math.min(2, this.camera.zoom * 0.04));
+      if (signal.shape?.length >= 3) {
+        if (!boundsIntersects(signal.bounds, this.viewBounds)) continue;
+        drawPolygon(ctx, signal.shape, (p) => this.worldToScreen(p));
+        ctx.globalAlpha = 0.86;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.stroke();
+        continue;
+      }
       if (!pointInBounds(signal.point, this.viewBounds, pad)) continue;
       const p = this.worldToScreen(signal.point);
-      ctx.fillStyle = "#ef6f6c";
       ctx.beginPath();
       ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
       ctx.fill();
@@ -340,6 +376,12 @@ export class CanvasRenderer {
       ctx.stroke();
     } else if (hit.kind === "road") {
       drawPolyline(ctx, hit.road.referenceLine, (p) => this.worldToScreen(p));
+      ctx.stroke();
+    } else if (hit.kind === "object" && hit.object.outline?.length >= 3) {
+      drawPolygon(ctx, hit.object.outline, (p) => this.worldToScreen(p));
+      ctx.stroke();
+    } else if (hit.kind === "signal" && hit.signal.shape?.length >= 3) {
+      drawPolygon(ctx, hit.signal.shape, (p) => this.worldToScreen(p));
       ctx.stroke();
     } else {
       const p = this.worldToScreen(hit.signal?.point ?? hit.object?.point);
@@ -396,6 +438,8 @@ function hitToBounds(hit) {
   if (!hit) return null;
   if (hit.kind === "lane") return hit.lane.bounds;
   if (hit.kind === "road") return hit.road.bounds;
+  if (hit.kind === "object" && hit.object.bounds) return hit.object.bounds;
+  if (hit.kind === "signal" && hit.signal.bounds) return hit.signal.bounds;
   const point = hit.signal?.point ?? hit.object?.point;
   if (!point) return null;
   return boundsOf([{ x: point.x - 12, y: point.y - 12 }, { x: point.x + 12, y: point.y + 12 }]);

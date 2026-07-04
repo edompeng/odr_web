@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { CoordinateFormatter } from "../src/domain/coordinates.js";
 import {
   boundsOf,
   hasValidBounds,
@@ -76,6 +77,21 @@ test("bounds helpers skip empty geometry until a fallback is required", () => {
   assert.deepEqual(merged, { minX: 1000, minY: 2000, maxX: 1010, maxY: 2020 });
 
   assert.deepEqual(mergeBounds([empty]), { minX: -10, minY: -10, maxX: 10, maxY: 10 });
+});
+
+test("coordinate formatter switches between UTM and longitude latitude display", () => {
+  const formatter = new CoordinateFormatter({
+    header: { geoReference: "+proj=utm +zone=50 +datum=WGS84 +units=m +no_defs" },
+  });
+  formatter.setMode("lonlat");
+  const point = formatter.point({ x: 500000, y: 0, hdg: 0, s: 0 });
+  assert.ok(Math.abs(point.longitude - 117) < 1e-6);
+  assert.ok(Math.abs(point.latitude) < 1e-6);
+
+  formatter.setMap({ header: { geoReference: "" } });
+  formatter.setMode("lonlat");
+  assert.equal(formatter.mode, "utm");
+  assert.deepEqual(formatter.point({ x: 1, y: 2 }), { easting: 1, northing: 2 });
 });
 
 test("segments reference line and supports variable lane offsets", () => {

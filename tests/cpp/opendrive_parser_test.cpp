@@ -83,6 +83,39 @@ const char kMixedEmptyRoad[] = R"xml(<?xml version="1.0" encoding="UTF-8"?>
   <road name="Empty" length="10" id="2" junction="-1"/>
 </OpenDRIVE>)xml";
 
+const char kLaneOffsetAndElementGeometry[] = R"xml(<?xml version="1.0" encoding="UTF-8"?>
+<OpenDRIVE>
+  <road name="Offset" length="20" id="1" junction="-1">
+    <planView>
+      <geometry s="0" x="0" y="0" hdg="0" length="20"><line/></geometry>
+    </planView>
+    <lanes>
+      <laneOffset s="0" a="2" b="0" c="0" d="0"/>
+      <laneSection s="0">
+        <left>
+          <lane id="1" type="driving" level="false">
+            <width sOffset="0" a="3" b="0" c="0" d="0"/>
+          </lane>
+        </left>
+        <center><lane id="0" type="none" level="false"/></center>
+      </laneSection>
+    </lanes>
+    <objects>
+      <object id="box" type="building" s="10" t="2" hdg="0" width="4" length="6">
+        <outline>
+          <cornerLocal u="-3" v="-2"/>
+          <cornerLocal u="3" v="-2"/>
+          <cornerLocal u="3" v="2"/>
+          <cornerLocal u="-3" v="2"/>
+        </outline>
+      </object>
+    </objects>
+    <signals>
+      <signal id="sign" type="274" s="12" t="5" width="1.2" height="2.5" hOffset="0"/>
+    </signals>
+  </road>
+</OpenDRIVE>)xml";
+
 void Check(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
@@ -160,6 +193,26 @@ void TestMapBoundsIgnoreEmptyRoads() {
         "invalid bounds sentinel leaked to JSON");
 }
 
+void TestLaneOffsetAndElementGeometry() {
+  const odrweb::OpenDriveMap map =
+      odrweb::OpenDriveParser().Parse(kLaneOffsetAndElementGeometry,
+                                      "geometry.xodr");
+  const odrweb::Road& road = map.roads.front();
+  Check(std::abs(road.lanes.front().centerline.front().y - 3.5) < 1e-9,
+        "laneOffset was not applied to lane centerline");
+  Check(road.objects.front().outline.size() == 4,
+        "object outline geometry was not parsed");
+  Check(road.signals.front().shape.size() == 4,
+        "signal shape geometry was not generated");
+
+  const std::string json = odrweb::ParseOpenDriveToJson(
+      kLaneOffsetAndElementGeometry, "geometry.xodr");
+  Check(json.find("\"outline\"") != std::string::npos,
+        "object outline missing from JSON");
+  Check(json.find("\"shape\"") != std::string::npos,
+        "signal shape missing from JSON");
+}
+
 }  // namespace
 
 int main() {
@@ -168,6 +221,7 @@ int main() {
   TestJsonExport();
   TestLaneSectionsAreClippedAndVariableWidth();
   TestMapBoundsIgnoreEmptyRoads();
+  TestLaneOffsetAndElementGeometry();
   std::cout << "opendrive_parser_test passed\n";
   return 0;
 }

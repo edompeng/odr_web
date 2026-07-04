@@ -1,11 +1,14 @@
 import { WasmBackedOpenDriveParser } from "./domain/wasmParser.js";
+import { CoordinateFormatter } from "./domain/coordinates.js";
 import { formatMeters } from "./domain/math.js";
 import { CanvasRenderer } from "./render/canvasRenderer.js";
-import { buildTreeItems, describeHit, hitTitle } from "./ui/treeModel.js";
+import { buildTreeNodes, describeHit, filterTreeNodes, hitTitle } from "./ui/treeModel.js";
 
 const SAMPLE_ODR = `<?xml version="1.0" encoding="UTF-8"?>
 <OpenDRIVE>
-  <header revMajor="1" revMinor="4" name="sample" version="1" date="2026-07-03" north="80" south="-20" east="140" west="-20" vendor="ODR Web Viewer"/>
+  <header revMajor="1" revMinor="4" name="sample" version="1" date="2026-07-03" north="80" south="-20" east="140" west="-20" vendor="ODR Web Viewer">
+    <geoReference><![CDATA[+proj=utm +zone=50 +datum=WGS84 +units=m +no_defs]]></geoReference>
+  </header>
   <road name="Main Road" length="120" id="1" junction="-1">
     <planView>
       <geometry s="0" x="0" y="0" hdg="0" length="70"><line/></geometry>
@@ -43,13 +46,17 @@ class OdrViewerApp {
   constructor() {
     this.parser = new WasmBackedOpenDriveParser();
     this.renderer = new CanvasRenderer(document.querySelector("#mapCanvas"));
-    this.treeItems = [];
+    this.coordinateFormatter = new CoordinateFormatter();
+    this.treeNodes = [];
+    this.expandedTreeNodes = new Set();
+    this.selectedHit = null;
     this.isDragging = false;
     this.lastPointer = null;
     this.measureMode = false;
     this.loadGeneration = 0;
     this.bindUi();
     this.populateLayers();
+    this.setCoordinateMode("utm");
     void this.loadText(SAMPLE_ODR, "sample.xodr");
     window.addEventListener("resize", () => this.renderer.resize());
   }
@@ -64,6 +71,8 @@ class OdrViewerApp {
       fitViewButton: document.querySelector("#fitViewButton"),
       view2dButton: document.querySelector("#view2dButton"),
       view3dButton: document.querySelector("#view3dButton"),
+      coordUtmButton: document.querySelector("#coordUtmButton"),
+      coordLonLatButton: document.querySelector("#coordLonLatButton"),
       measureToggle: document.querySelector("#measureToggle"),
       layerList: document.querySelector("#layerList"),
       treeList: document.querySelector("#treeList"),
@@ -83,6 +92,8 @@ class OdrViewerApp {
     this.el.screenshotButton.addEventListener("click", () => this.downloadScreenshot());
     this.el.view2dButton.addEventListener("click", () => this.setViewMode("2d"));
     this.el.view3dButton.addEventListener("click", () => this.setViewMode("3d"));
+    this.el.coordUtmButton.addEventListener("click", () => this.setCoordinateMode("utm"));
+    this.el.coordLonLatButton.addEventListener("click", () => this.setCoordinateMode("lonlat"));
     this.el.measureToggle.addEventListener("change", () => {
       this.measureMode = this.el.measureToggle.checked;
       if (!this.measureMode) this.renderer.clearMeasure();
@@ -183,12 +194,17 @@ class OdrViewerApp {
       this.el.mapStatus.textContent = `${fileName} | 正在解析...`;
       const map = await this.parser.parse(text, fileName);
       if (generation !== this.loadGeneration) return;
+      this.coordinateFormatter.setMap(map);
+      this.setCoordinateMode(this.coordinateFormatter.mode);
       this.renderer.setMap(map);
-      this.treeItems = buildTreeItems(map);
+      this.treeNodes = buildTreeNodes(map);
+      this.expandedTreeNodes = new Set(this.treeNodes.map((node) => node.id));
       this.renderTree();
       this.selectHit(null);
       this.updateMeasureStatus();
-      this.el.mapStatus.textContent = `${fileName} | ${this.parser.mode} | roads ${map.stats.roads} | lanes ${map.stats.lanes} | ${formatMeters(map.stats.lengthMeters)}`;
+      this.el.mapStatus.textContent =
+        `${fileName} | ${this.parser.mode} | roads ${map.stats.roads} | ` +
+        `lanes ${map.stats.lanes} | ${formatMeters(map.stats.lengthMeters)}`;
     } catch (error) {
       if (generation !== this.loadGeneration) return;
       this.el.mapStatus.textContent = `加载失败: ${error.message}`;
@@ -198,26 +214,50 @@ class OdrViewerApp {
 
   renderTree() {
     const q = this.el.searchInput.value.trim().toLowerCase();
-    const filtered = this.treeItems.filter((item) => !q || item.search.toLowerCase().includes(q)).slice(0, 500);
-    this.el.treeList.replaceChildren(
-      ...filtered.map((item) => {
-        const row = document.createElement("div");
-        row.className = "tree-item";
-        row.role = "treeitem";
-        row.addEventListener("click", () => {
-          this.selectHit(item.hit);
-          this.renderer.centerOnHit(item.hit);
-        });
-        const kind = document.createElement("span");
-        kind.className = "tree-kind";
-        kind.textContent = item.kind;
-        const label = document.createElement("span");
-        label.className = "tree-label";
-        label.textContent = item.label;
-        row.append(kind, label);
-        return row;
-      }),
-    );
+    const nodes = filterTreeNodes(this.treeNodes, q);
+    const fragment = document.createDocumentFragment();
+    for (const node of nodes) this.appendTreeNode(fragment, node, 0, Boolean(q));
+    this.el.treeList.replaceChildren(fragment);
+  }
+
+  appendTreeNode(parent, node, depth, forceExpanded) {
+    const row = document.createElement("div");
+    row.className = "tree-item";
+    row.role = "treeitem";
+    row.style.setProperty("--tree-depth", depth);
+    const hasChildren = (node.children?.length ?? 0) > 0;
+    const expanded = forceExpanded || this.expandedTreeNodes.has(node.id);
+    row.setAttribute("aria-expanded", hasChildren ? String(expanded) : "false");
+
+    const toggle = document.createElement("button");
+    toggle.className = "tree-toggle";
+    toggle.type = "button";
+    toggle.textContent = hasChildren ? (expanded ? "▾" : "▸") : "";
+    toggle.disabled = !hasChildren;
+    toggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (this.expandedTreeNodes.has(node.id)) this.expandedTreeNodes.delete(node.id);
+      else this.expandedTreeNodes.add(node.id);
+      this.renderTree();
+    });
+
+    const kind = document.createElement("span");
+    kind.className = "tree-kind";
+    kind.textContent = node.kind;
+    const label = document.createElement("span");
+    label.className = "tree-label";
+    label.textContent = node.label;
+    row.append(toggle, kind, label);
+    if (node.hit) {
+      row.addEventListener("click", () => {
+        this.selectHit(node.hit);
+        this.renderer.centerOnHit(node.hit);
+      });
+    }
+    parent.append(row);
+    if (hasChildren && expanded) {
+      for (const child of node.children) this.appendTreeNode(parent, child, depth + 1, forceExpanded);
+    }
   }
 
   setViewMode(mode) {
@@ -227,15 +267,27 @@ class OdrViewerApp {
   }
 
   selectHit(hit) {
+    this.selectedHit = hit;
     this.renderer.setSelected(hit);
     this.el.detailsTitle.textContent = hitTitle(hit);
-    this.el.detailsContent.textContent = describeHit(hit);
+    this.el.detailsContent.textContent = describeHit(hit, this.coordinateFormatter);
   }
 
   updateHoverStatus(hit, screenPos) {
     const world = this.renderer.screenToWorld(screenPos);
     const prefix = hit ? `${hit.kind} | ` : "";
-    this.el.hoverStatus.textContent = `${prefix}x: ${world.x.toFixed(2)}, y: ${world.y.toFixed(2)}`;
+    this.el.hoverStatus.textContent = `${prefix}${this.coordinateFormatter.status(world)}`;
+  }
+
+  setCoordinateMode(mode) {
+    this.coordinateFormatter.setMode(mode);
+    this.el.coordUtmButton.classList.toggle("active", this.coordinateFormatter.mode === "utm");
+    this.el.coordLonLatButton.classList.toggle("active", this.coordinateFormatter.mode === "lonlat");
+    this.el.coordLonLatButton.disabled = !this.coordinateFormatter.canUseLonLat();
+    this.el.coordLonLatButton.title = this.coordinateFormatter.canUseLonLat()
+      ? ""
+      : "geoReference 未提供 UTM 投影";
+    this.selectHit(this.selectedHit);
   }
 
   updateMeasureStatus() {

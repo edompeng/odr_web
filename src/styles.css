@@ -186,11 +186,11 @@ button:hover {
 
 .tree-item {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 18px 44px minmax(0, 1fr);
   gap: 6px;
   align-items: center;
   min-height: 30px;
-  padding: 0 8px;
+  padding: 0 8px 0 calc(8px + var(--tree-depth, 0) * 16px);
   border-bottom: 1px solid rgba(57, 65, 78, 0.45);
   color: var(--text);
   cursor: pointer;
@@ -206,6 +206,21 @@ button:hover {
   color: var(--accent-2);
   font-size: 11px;
   text-align: center;
+}
+
+.tree-toggle {
+  width: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  font-size: 12px;
+}
+
+.tree-toggle:disabled {
+  cursor: default;
 }
 
 .tree-label {

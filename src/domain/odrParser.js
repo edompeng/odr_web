@@ -1,6 +1,7 @@
 import {
   lanePolygonFromOffsets,
   offsetPolylineByOffsets,
+  interpolatePointAtS,
   parseGeometryNode,
   sampleGeometry,
   segmentPolylineByS,
@@ -59,6 +60,28 @@ function parseRoadMarks(laneNode) {
   }));
 }
 
+function parsePolynomialEntries(parentNode, childName) {
+  return directChildren(parentNode, childName)
+    .map((node) => ({
+      sOffset: attrNumber(node, "s"),
+      a: attrNumber(node, "a"),
+      b: attrNumber(node, "b"),
+      c: attrNumber(node, "c"),
+      d: attrNumber(node, "d"),
+    }))
+    .sort((a, b) => a.sOffset - b.sOffset);
+}
+
+function polynomialAt(entries, s, fallback = 0) {
+  if (entries.length === 0) return fallback;
+  let selected = entries[0];
+  for (const entry of entries) {
+    if (entry.sOffset <= s) selected = entry;
+  }
+  const ds = Math.max(0, s - selected.sOffset);
+  return selected.a + selected.b * ds + selected.c * ds * ds + selected.d * ds * ds * ds;
+}
+
 function parseLanes(sectionNode, side) {
   const sideNode = firstDirect(sectionNode, side);
   if (!sideNode) return [];
@@ -103,10 +126,11 @@ function buildLaneShapes(road, sectionNode, sectionEnd) {
       const outerOffsets = new Array(sectionLine.length);
       const centerOffsets = new Array(sectionLine.length);
       sectionLine.forEach((point, index) => {
+        const laneOffset = polynomialAt(road.laneOffsets, point.s, 0);
         const width = widthAt(lane.widths, Math.max(0, point.s - sectionS));
-        innerOffsets[index] = sign * cumulative[index];
+        innerOffsets[index] = laneOffset + sign * cumulative[index];
         cumulative[index] += width;
-        outerOffsets[index] = sign * cumulative[index];
+        outerOffsets[index] = laneOffset + sign * cumulative[index];
         centerOffsets[index] = (innerOffsets[index] + outerOffsets[index]) * 0.5;
       });
       const polygon = lanePolygonFromOffsets(sectionLine, innerOffsets, outerOffsets);
@@ -128,6 +152,10 @@ function buildLaneShapes(road, sectionNode, sectionEnd) {
   }
 
   for (const lane of laneGroups.center) {
+    const centerline = offsetPolylineByOffsets(
+      sectionLine,
+      sectionLine.map((point) => polynomialAt(road.laneOffsets, point.s, 0)),
+    );
     shapes.push({
       key: `${road.id}:${sectionS}:0`,
       roadId: road.id,
@@ -136,8 +164,8 @@ function buildLaneShapes(road, sectionNode, sectionEnd) {
       laneType: lane.type,
       side: "center",
       polygon: [],
-      centerline: sectionLine,
-      bounds: boundsOf(sectionLine),
+      centerline,
+      bounds: boundsOf(centerline),
       color: "#d9dde2",
       roadMarks: lane.roadMarks,
     });
@@ -149,6 +177,7 @@ function buildLaneShapes(road, sectionNode, sectionEnd) {
 function parseObjects(roadNode, road) {
   const objectsNode = firstDirect(roadNode, "objects");
   return directChildren(objectsNode, "object").map((node) => ({
+    sourceNode: node,
     key: `${road.id}:object:${attr(node, "id")}`,
     roadId: road.id,
     id: attr(node, "id"),
@@ -156,8 +185,10 @@ function parseObjects(roadNode, road) {
     type: attr(node, "type"),
     s: attrNumber(node, "s"),
     t: attrNumber(node, "t"),
+    hdg: attrNumber(node, "hdg"),
     width: attrNumber(node, "width"),
     length: attrNumber(node, "length"),
+    height: attrNumber(node, "height"),
   }));
 }
 
@@ -172,6 +203,9 @@ function parseSignals(roadNode, road) {
     subtype: attr(node, "subtype"),
     s: attrNumber(node, "s"),
     t: attrNumber(node, "t"),
+    width: attrNumber(node, "width"),
+    height: attrNumber(node, "height"),
+    hOffset: attrNumber(node, "hOffset"),
   }));
 }
 
@@ -184,21 +218,61 @@ function parseJunctions(doc) {
 }
 
 function projectRoadPoint(road, s, t) {
-  if (road.referenceLine.length === 0) return { x: 0, y: 0 };
-  let nearest = road.referenceLine[0];
-  let best = Number.POSITIVE_INFINITY;
-  for (const p of road.referenceLine) {
-    const d = Math.abs((p.s ?? 0) - s);
-    if (d < best) {
-      best = d;
-      nearest = p;
+  const reference = interpolatePointAtS(road.referenceLine, s);
+  return {
+    x: reference.x - Math.sin(reference.hdg) * t,
+    y: reference.y + Math.cos(reference.hdg) * t,
+    hdg: reference.hdg,
+  };
+}
+
+function transformLocalPoint(origin, hdg, u, v) {
+  return {
+    x: origin.x + Math.cos(hdg) * u - Math.sin(hdg) * v,
+    y: origin.y + Math.sin(hdg) * u + Math.cos(hdg) * v,
+    hdg,
+    s: origin.s,
+  };
+}
+
+function rectangleAroundPoint(origin, hdg, length, width) {
+  if (length <= 0 || width <= 0) return [];
+  const halfLength = length * 0.5;
+  const halfWidth = width * 0.5;
+  return [
+    transformLocalPoint(origin, hdg, -halfLength, -halfWidth),
+    transformLocalPoint(origin, hdg, halfLength, -halfWidth),
+    transformLocalPoint(origin, hdg, halfLength, halfWidth),
+    transformLocalPoint(origin, hdg, -halfLength, halfWidth),
+  ];
+}
+
+function parseObjectOutline(node, road, object) {
+  const outlines = directChildren(node, "outline");
+  for (const outline of outlines) {
+    const cornerRoad = directChildren(outline, "cornerRoad");
+    if (cornerRoad.length >= 3) {
+      return cornerRoad.map((corner) =>
+        projectRoadPoint(road, attrNumber(corner, "s", object.s), attrNumber(corner, "t", object.t)),
+      );
+    }
+
+    const cornerLocal = directChildren(outline, "cornerLocal");
+    if (cornerLocal.length >= 3) {
+      const hdg = object.point.hdg + object.hdg;
+      return cornerLocal.map((corner) =>
+        transformLocalPoint(object.point, hdg, attrNumber(corner, "u"), attrNumber(corner, "v")),
+      );
     }
   }
-  return {
-    x: nearest.x - Math.sin(nearest.hdg) * t,
-    y: nearest.y + Math.cos(nearest.hdg) * t,
-    hdg: nearest.hdg,
-  };
+  return rectangleAroundPoint(object.point, object.point.hdg + object.hdg, object.length, object.width);
+}
+
+function signalShape(signal) {
+  if (signal.width <= 0) return [];
+  const hdg = signal.point.hdg + signal.hOffset;
+  const depth = Math.max(0.15, Math.min(0.4, signal.height > 0 ? signal.height * 0.08 : 0.2));
+  return rectangleAroundPoint(signal.point, hdg, depth, signal.width);
 }
 
 function hasRenderableGeometry(road) {
@@ -226,6 +300,7 @@ export class OpenDriveParser {
         junction: attr(roadNode, "junction", "-1"),
         length: attrNumber(roadNode, "length"),
         referenceLine: sampleRoadReferenceLine(roadNode),
+        laneOffsets: parsePolynomialEntries(firstDirect(roadNode, "lanes"), "laneOffset"),
         lanes: [],
         objects: [],
         signals: [],
@@ -236,15 +311,29 @@ export class OpenDriveParser {
         const sectionEnd = index + 1 < sections.length ? attrNumber(sections[index + 1], "s") : road.length;
         return buildLaneShapes(road, sectionNode, sectionEnd);
       });
-      road.objects = parseObjects(roadNode, road).map((object) => ({
-        ...object,
-        point: projectRoadPoint(road, object.s, object.t),
-      }));
-      road.signals = parseSignals(roadNode, road).map((signal) => ({
+      road.objects = parseObjects(roadNode, road).map(({ sourceNode, ...object }) => {
+        const withPoint = { ...object, point: projectRoadPoint(road, object.s, object.t) };
+        const outline = parseObjectOutline(sourceNode, road, withPoint);
+        return {
+          ...withPoint,
+          outline,
+          bounds: boundsOf(outline.length >= 3 ? outline : [withPoint.point]),
+        };
+      });
+      road.signals = parseSignals(roadNode, road).map((signal) => {
+        const withPoint = { ...signal, point: projectRoadPoint(road, signal.s, signal.t) };
+        return { ...withPoint, shape: signalShape(withPoint) };
+      });
+      road.signals = road.signals.map((signal) => ({
         ...signal,
-        point: projectRoadPoint(road, signal.s, signal.t),
+        bounds: boundsOf(signal.shape.length >= 3 ? signal.shape : [signal.point]),
       }));
-      road.bounds = mergeBounds([boundsOf(road.referenceLine), ...road.lanes.map((lane) => lane.bounds)]);
+      road.bounds = mergeBounds([
+        boundsOf(road.referenceLine),
+        ...road.lanes.map((lane) => lane.bounds),
+        ...road.objects.map((object) => object.bounds),
+        ...road.signals.map((signal) => signal.bounds),
+      ]);
       return road;
     });
 

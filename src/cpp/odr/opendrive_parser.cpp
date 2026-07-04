@@ -255,6 +255,32 @@ std::vector<Width> ParseWidths(const XmlNode& lane_node) {
   return widths;
 }
 
+std::vector<Width> ParsePolynomialEntries(const XmlNode& parent,
+                                          const std::string& child_name) {
+  std::vector<Width> entries;
+  for (const XmlNode* node : parent.Children(child_name)) {
+    entries.push_back({NumberAttr(*node, "s"), NumberAttr(*node, "a"),
+                       NumberAttr(*node, "b"), NumberAttr(*node, "c"),
+                       NumberAttr(*node, "d")});
+  }
+  std::sort(entries.begin(), entries.end(),
+            [](const Width& lhs, const Width& rhs) {
+              return lhs.s_offset < rhs.s_offset;
+            });
+  return entries;
+}
+
+double PolynomialAt(const std::vector<Width>& entries, double s,
+                    double fallback = 0.0) {
+  if (entries.empty()) return fallback;
+  const Width* selected = &entries.front();
+  for (const Width& entry : entries) {
+    if (entry.s_offset <= s) selected = &entry;
+  }
+  const double ds = std::max(0.0, s - selected->s_offset);
+  return Cubic(selected->a, selected->b, selected->c, selected->d, ds);
+}
+
 std::vector<RoadMark> ParseRoadMarks(const XmlNode& lane_node) {
   std::vector<RoadMark> marks;
   for (const XmlNode* node : lane_node.Children("roadMark")) {
@@ -310,6 +336,67 @@ Point ProjectRoadPoint(const Road& road, double s, double t) {
   return OffsetPoint(InterpolatePointAtS(road.reference_line, s), t);
 }
 
+Point TransformLocalPoint(const Point& origin, double hdg, double u, double v) {
+  Point out;
+  out.x = origin.x + std::cos(hdg) * u - std::sin(hdg) * v;
+  out.y = origin.y + std::sin(hdg) * u + std::cos(hdg) * v;
+  out.hdg = hdg;
+  out.s = origin.s;
+  return out;
+}
+
+std::vector<Point> RectangleAroundPoint(const Point& origin, double hdg,
+                                        double length, double width) {
+  if (length <= 0.0 || width <= 0.0) return {};
+  const double half_length = length * 0.5;
+  const double half_width = width * 0.5;
+  return {TransformLocalPoint(origin, hdg, -half_length, -half_width),
+          TransformLocalPoint(origin, hdg, half_length, -half_width),
+          TransformLocalPoint(origin, hdg, half_length, half_width),
+          TransformLocalPoint(origin, hdg, -half_length, half_width)};
+}
+
+std::vector<Point> ParseObjectOutline(const XmlNode& object_node,
+                                      const Road& road,
+                                      const RoadObject& object) {
+  for (const XmlNode* outline : object_node.Children("outline")) {
+    std::vector<const XmlNode*> corner_road = outline->Children("cornerRoad");
+    if (corner_road.size() >= 3) {
+      std::vector<Point> points;
+      points.reserve(corner_road.size());
+      for (const XmlNode* corner : corner_road) {
+        points.push_back(ProjectRoadPoint(road, NumberAttr(*corner, "s", object.s),
+                                          NumberAttr(*corner, "t", object.t)));
+      }
+      return points;
+    }
+
+    std::vector<const XmlNode*> corner_local = outline->Children("cornerLocal");
+    if (corner_local.size() >= 3) {
+      std::vector<Point> points;
+      points.reserve(corner_local.size());
+      const double hdg = object.point.hdg + object.hdg;
+      for (const XmlNode* corner : corner_local) {
+        points.push_back(TransformLocalPoint(object.point, hdg,
+                                             NumberAttr(*corner, "u"),
+                                             NumberAttr(*corner, "v")));
+      }
+      return points;
+    }
+  }
+  return RectangleAroundPoint(object.point, object.point.hdg + object.hdg,
+                              object.length, object.width);
+}
+
+std::vector<Point> SignalShape(const Signal& signal) {
+  if (signal.width <= 0.0) return {};
+  const double depth =
+      std::max(0.15, std::min(0.4, signal.height > 0.0 ? signal.height * 0.08
+                                                       : 0.2));
+  return RectangleAroundPoint(signal.point, signal.point.hdg + signal.h_offset,
+                              depth, signal.width);
+}
+
 std::vector<Lane> BuildLaneShapes(const Road& road, const XmlNode& section_node,
                                   double section_end) {
   const double section_s = NumberAttr(section_node, "s");
@@ -341,10 +428,11 @@ std::vector<Lane> BuildLaneShapes(const Road& road, const XmlNode& section_node,
       std::vector<double> center_offsets(section_line.size());
       for (std::size_t i = 0; i < section_line.size(); ++i) {
         const double local_s = std::max(0.0, section_line[i].s - section_s);
+        const double lane_offset = PolynomialAt(road.lane_offsets, section_line[i].s);
         const double width = WidthAt(source.widths, local_s);
-        inner[i] = sign * cumulative[i];
+        inner[i] = lane_offset + sign * cumulative[i];
         cumulative[i] += width;
-        outer[i] = sign * cumulative[i];
+        outer[i] = lane_offset + sign * cumulative[i];
         center_offsets[i] = (inner[i] + outer[i]) * 0.5;
       }
       Lane lane;
@@ -374,7 +462,11 @@ std::vector<Lane> BuildLaneShapes(const Road& road, const XmlNode& section_node,
     lane.id = source.id;
     lane.type = source.type;
     lane.side = "center";
-    lane.centerline = section_line;
+    std::vector<double> center_offsets(section_line.size());
+    for (std::size_t i = 0; i < section_line.size(); ++i) {
+      center_offsets[i] = PolynomialAt(road.lane_offsets, section_line[i].s);
+    }
+    lane.centerline = OffsetPolylineByOffsets(section_line, center_offsets);
     lane.road_marks = source.road_marks;
     lane.bounds = BoundsOf(lane.centerline);
     shapes.push_back(std::move(lane));
@@ -393,9 +485,15 @@ void ParseObjectsAndSignals(const XmlNode& road_node, Road* road) {
       object.type = StringAttr(*node, "type");
       object.s = NumberAttr(*node, "s");
       object.t = NumberAttr(*node, "t");
+      object.hdg = NumberAttr(*node, "hdg");
       object.width = NumberAttr(*node, "width");
       object.length = NumberAttr(*node, "length");
+      object.height = NumberAttr(*node, "height");
       object.point = ProjectRoadPoint(*road, object.s, object.t);
+      object.outline = ParseObjectOutline(*node, *road, object);
+      object.bounds = BoundsOf(object.outline.size() >= 3
+                                   ? object.outline
+                                   : std::vector<Point>{object.point});
       road->objects.push_back(std::move(object));
     }
   }
@@ -411,7 +509,14 @@ void ParseObjectsAndSignals(const XmlNode& road_node, Road* road) {
       signal.subtype = StringAttr(*node, "subtype");
       signal.s = NumberAttr(*node, "s");
       signal.t = NumberAttr(*node, "t");
+      signal.width = NumberAttr(*node, "width");
+      signal.height = NumberAttr(*node, "height");
+      signal.h_offset = NumberAttr(*node, "hOffset");
       signal.point = ProjectRoadPoint(*road, signal.s, signal.t);
+      signal.shape = SignalShape(signal);
+      signal.bounds = BoundsOf(signal.shape.size() >= 3
+                                   ? signal.shape
+                                   : std::vector<Point>{signal.point});
       road->signals.push_back(std::move(signal));
     }
   }
@@ -461,6 +566,7 @@ OpenDriveMap OpenDriveParser::Parse(const std::string& xml,
     road.reference_line = SampleReferenceLine(*road_node);
 
     if (const XmlNode* lanes_node = road_node->FirstChild("lanes")) {
+      road.lane_offsets = ParsePolynomialEntries(*lanes_node, "laneOffset");
       const std::vector<const XmlNode*> sections =
           lanes_node->Children("laneSection");
       for (std::size_t i = 0; i < sections.size(); ++i) {
@@ -478,6 +584,12 @@ OpenDriveMap OpenDriveParser::Parse(const std::string& xml,
     ParseObjectsAndSignals(*road_node, &road);
     road.bounds = BoundsOf(road.reference_line);
     for (const Lane& lane : road.lanes) MergeBounds(&road.bounds, lane.bounds);
+    for (const RoadObject& object : road.objects) {
+      MergeBounds(&road.bounds, object.bounds);
+    }
+    for (const Signal& signal : road.signals) {
+      MergeBounds(&road.bounds, signal.bounds);
+    }
     if (HasValidBounds(road.bounds)) MergeBounds(&map.bounds, road.bounds);
     road.bounds = NormalizeBounds(road.bounds);
     map.stats.length_meters += road.length;

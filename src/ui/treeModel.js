@@ -1,46 +1,74 @@
-export function buildTreeItems(map) {
+import { serializeWithDisplayCoordinates } from "../domain/coordinates.js";
+
+export function buildTreeNodes(map) {
   if (!map) return [];
-  const items = [];
-  for (const road of map.roads) {
-    items.push({
-      kind: "road",
-      label: `${road.id} ${road.name || ""}`.trim(),
-      search: `road ${road.id} ${road.name}`,
-      hit: { kind: "road", road },
-    });
-    for (const lane of road.lanes) {
-      if (lane.laneId === 0) continue;
-      items.push({
-        kind: "lane",
-        label: `road ${road.id} / lane ${lane.laneId} (${lane.laneType})`,
-        search: `lane ${road.id} ${lane.laneId} ${lane.laneType}`,
-        hit: { kind: "lane", road, lane },
-      });
-    }
-    for (const object of road.objects) {
-      items.push({
-        kind: "obj",
-        label: `road ${road.id} / object ${object.id || object.type}`,
-        search: `object ${road.id} ${object.id} ${object.name} ${object.type}`,
-        hit: { kind: "object", object },
-      });
-    }
-    for (const signal of road.signals) {
-      items.push({
-        kind: "sig",
-        label: `road ${road.id} / signal ${signal.id || signal.type}`,
-        search: `signal ${road.id} ${signal.id} ${signal.name} ${signal.type}`,
-        hit: { kind: "signal", signal },
-      });
-    }
-  }
-  return items;
+  return map.roads.map((road) => ({
+    id: `road:${road.id}`,
+    kind: "road",
+    label: `${road.id} ${road.name || ""}`.trim(),
+    search: `road ${road.id} ${road.name}`,
+    hit: { kind: "road", road },
+    children: [
+      groupNode(
+        `road:${road.id}:lanes`,
+        "lanes",
+        `车道 (${road.lanes.filter((lane) => lane.laneId !== 0).length})`,
+        road.lanes
+          .filter((lane) => lane.laneId !== 0)
+          .map((lane) => ({
+            id: `lane:${lane.key}`,
+            kind: "lane",
+            label: `lane ${lane.laneId} (${lane.laneType})`,
+            search: `lane ${road.id} ${lane.laneId} ${lane.laneType}`,
+            hit: { kind: "lane", road, lane },
+            children: [],
+          })),
+      ),
+      groupNode(
+        `road:${road.id}:objects`,
+        "objects",
+        `对象 (${road.objects.length})`,
+        road.objects.map((object) => ({
+          id: `object:${object.key}`,
+          kind: "obj",
+          label: object.id || object.type || "object",
+          search: `object ${road.id} ${object.id} ${object.name} ${object.type}`,
+          hit: { kind: "object", object },
+          children: [],
+        })),
+      ),
+      groupNode(
+        `road:${road.id}:signals`,
+        "signals",
+        `信号 (${road.signals.length})`,
+        road.signals.map((signal) => ({
+          id: `signal:${signal.key}`,
+          kind: "sig",
+          label: signal.id || signal.type || "signal",
+          search: `signal ${road.id} ${signal.id} ${signal.name} ${signal.type}`,
+          hit: { kind: "signal", signal },
+          children: [],
+        })),
+      ),
+    ],
+  }));
 }
 
-export function describeHit(hit) {
+export function filterTreeNodes(nodes, query) {
+  if (!query) return nodes;
+  return nodes.flatMap((node) => {
+    const children = filterTreeNodes(node.children ?? [], query);
+    if (node.search.toLowerCase().includes(query) || children.length > 0) {
+      return [{ ...node, children }];
+    }
+    return [];
+  });
+}
+
+export function describeHit(hit, formatter) {
   if (!hit) return "选择道路、车道、对象或信号后显示属性。";
   if (hit.kind === "lane") {
-    return JSON.stringify(
+    return serializeWithDisplayCoordinates(
       {
         type: "lane",
         roadId: hit.road.id,
@@ -49,14 +77,15 @@ export function describeHit(hit) {
         laneType: hit.lane.laneType,
         side: hit.lane.side,
         sectionS: hit.lane.sectionS,
+        centerline: hit.lane.centerline,
+        polygon: hit.lane.polygon,
         roadMarks: hit.lane.roadMarks,
       },
-      null,
-      2,
+      formatter,
     );
   }
   if (hit.kind === "road") {
-    return JSON.stringify(
+    return serializeWithDisplayCoordinates(
       {
         type: "road",
         id: hit.road.id,
@@ -66,12 +95,12 @@ export function describeHit(hit) {
         laneCount: hit.road.lanes.length,
         objectCount: hit.road.objects.length,
         signalCount: hit.road.signals.length,
+        referenceLine: hit.road.referenceLine,
       },
-      null,
-      2,
+      formatter,
     );
   }
-  return JSON.stringify(hit.signal ?? hit.object, null, 2);
+  return serializeWithDisplayCoordinates(hit.signal ?? hit.object, formatter);
 }
 
 export function hitTitle(hit) {
@@ -80,4 +109,15 @@ export function hitTitle(hit) {
   if (hit.kind === "road") return `Road ${hit.road.id}`;
   if (hit.kind === "signal") return `Signal ${hit.signal.id || hit.signal.type}`;
   return `Object ${hit.object.id || hit.object.type}`;
+}
+
+function groupNode(id, kind, label, children) {
+  return {
+    id,
+    kind,
+    label,
+    search: `${kind} ${label}`,
+    hit: null,
+    children,
+  };
 }

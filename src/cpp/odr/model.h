@@ -55,9 +55,13 @@ struct RoadObject {
   std::string type;
   double s = 0.0;
   double t = 0.0;
+  double hdg = 0.0;
   double width = 0.0;
   double length = 0.0;
+  double height = 0.0;
   Point point;
+  std::vector<Point> outline;
+  Bounds bounds;
 };
 
 struct Signal {
@@ -69,7 +73,12 @@ struct Signal {
   std::string subtype;
   double s = 0.0;
   double t = 0.0;
+  double width = 0.0;
+  double height = 0.0;
+  double h_offset = 0.0;
   Point point;
+  std::vector<Point> shape;
+  Bounds bounds;
 };
 
 struct Junction {
@@ -84,6 +93,7 @@ struct Road {
   std::string junction;
   double length = 0.0;
   std::vector<Point> reference_line;
+  std::vector<Width> lane_offsets;
   std::vector<Lane> lanes;
   std::vector<RoadObject> objects;
   std::vector<Signal> signals;

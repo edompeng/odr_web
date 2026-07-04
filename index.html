@@ -33,6 +33,10 @@
             <button id="view2dButton" class="active" type="button">2D</button>
             <button id="view3dButton" type="button">3D</button>
           </div>
+          <div class="segmented" role="group" aria-label="坐标模式">
+            <button id="coordUtmButton" class="active" type="button">UTM</button>
+            <button id="coordLonLatButton" type="button">经纬度</button>
+          </div>
           <label class="toggle-row">
             <input id="measureToggle" type="checkbox" />
             <span>测距模式</span>
@@ -56,7 +60,7 @@
         <div id="dropOverlay" class="drop-overlay">松开以加载 OpenDRIVE 文件</div>
         <div class="statusbar">
           <span id="mapStatus">未加载地图</span>
-          <span id="hoverStatus">x: -, y: -, s: -</span>
+          <span id="hoverStatus">E: -, N: -</span>
           <span id="measureStatus">测距: 0.00 m</span>
         </div>
         <section id="detailsPanel" class="details-panel" aria-label="元素信息">

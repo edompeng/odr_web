@@ -108,9 +108,14 @@ void ObjectJson(std::ostream& os, const RoadObject& object) {
   os << ",\"type\":";
   JsonString(os, object.type);
   os << ",\"s\":" << object.s << ",\"t\":" << object.t
-     << ",\"width\":" << object.width << ",\"length\":" << object.length
+     << ",\"hdg\":" << object.hdg << ",\"width\":" << object.width
+     << ",\"length\":" << object.length << ",\"height\":" << object.height
      << ",\"point\":";
   PointJson(os, object.point);
+  os << ",\"outline\":";
+  ArrayJson(os, object.outline, PointJson);
+  os << ",\"bounds\":";
+  BoundsJson(os, object.bounds);
   os << '}';
 }
 
@@ -127,8 +132,14 @@ void SignalJson(std::ostream& os, const Signal& signal) {
   JsonString(os, signal.type);
   os << ",\"subtype\":";
   JsonString(os, signal.subtype);
-  os << ",\"s\":" << signal.s << ",\"t\":" << signal.t << ",\"point\":";
+  os << ",\"s\":" << signal.s << ",\"t\":" << signal.t
+     << ",\"width\":" << signal.width << ",\"height\":" << signal.height
+     << ",\"hOffset\":" << signal.h_offset << ",\"point\":";
   PointJson(os, signal.point);
+  os << ",\"shape\":";
+  ArrayJson(os, signal.shape, PointJson);
+  os << ",\"bounds\":";
+  BoundsJson(os, signal.bounds);
   os << '}';
 }
 
