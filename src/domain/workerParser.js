@@ -1,8 +1,10 @@
 import { WasmBackedOpenDriveParser } from "./wasmParser.js";
+import { OpenDriveParser } from "./odrParser.js";
 
 export class WorkerBackedOpenDriveParser {
   constructor() {
     this.fallback = new WasmBackedOpenDriveParser();
+    this.javascriptFallback = new OpenDriveParser();
     this.worker = null;
     this.pending = null;
     this.nextRequestId = 1;
@@ -36,7 +38,9 @@ export class WorkerBackedOpenDriveParser {
   ensureWorker() {
     if (this.worker) return this.worker;
     this.worker = new Worker(new URL("./parserWorker.js", import.meta.url), { type: "module" });
-    this.worker.addEventListener("message", (event) => this.handleMessage(event.data));
+    this.worker.addEventListener("message", (event) => {
+      void this.handleMessage(event.data);
+    });
     this.worker.addEventListener("error", (event) => {
       this.rejectPending(new Error(event.message || "OpenDRIVE worker failed"));
       this.resetWorker();
@@ -44,13 +48,21 @@ export class WorkerBackedOpenDriveParser {
     return this.worker;
   }
 
-  handleMessage(message) {
+  async handleMessage(message) {
     if (!this.pending || message.id !== this.pending.id) return;
     const { resolve, reject } = this.pending;
     this.pending = null;
     if (message.ok) {
       this.mode = `worker/${message.mode}`;
       resolve(message.map);
+    } else if (message.recoverable && typeof message.text === "string") {
+      this.resetWorker();
+      try {
+        this.mode = "main-thread/javascript";
+        resolve(this.javascriptFallback.parse(message.text, message.fileName || "untitled.xodr"));
+      } catch (error) {
+        reject(error);
+      }
     } else {
       reject(new Error(message.message || "OpenDRIVE parse failed"));
     }

@@ -1,8 +1,9 @@
 import { OpenDriveParser } from "./odrParser.js";
 
 export class WasmBackedOpenDriveParser {
-  constructor() {
-    this.fallback = new OpenDriveParser();
+  constructor({ enableJavaScriptFallback = true } = {}) {
+    this.enableJavaScriptFallback = enableJavaScriptFallback;
+    this.fallback = enableJavaScriptFallback ? new OpenDriveParser() : null;
     this.modulePromise = this.loadModule();
     this.mode = "loading";
   }
@@ -10,6 +11,7 @@ export class WasmBackedOpenDriveParser {
   async parse(text, fileName = "untitled.xodr") {
     const module = await this.modulePromise;
     if (!module) {
+      if (!this.enableJavaScriptFallback) throw new Error("WASM parser unavailable");
       this.mode = "javascript";
       return this.fallback.parse(text, fileName);
     }
@@ -19,6 +21,7 @@ export class WasmBackedOpenDriveParser {
       if (parsed?.error) throw new Error(parsed.error);
       return parsed;
     } catch (error) {
+      if (!this.enableJavaScriptFallback) throw error;
       console.warn("WASM parser failed; falling back to JavaScript parser.", error);
       this.mode = "javascript";
       return this.fallback.parse(text, fileName);

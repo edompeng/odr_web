@@ -1,6 +1,6 @@
 import { WasmBackedOpenDriveParser } from "./wasmParser.js";
 
-const parser = new WasmBackedOpenDriveParser();
+const parser = new WasmBackedOpenDriveParser({ enableJavaScriptFallback: false });
 const decoder = new TextDecoder("utf-8");
 
 self.addEventListener("message", async (event) => {
@@ -13,6 +13,9 @@ self.addEventListener("message", async (event) => {
     self.postMessage({
       id,
       ok: false,
+      recoverable: true,
+      fileName,
+      text: xml,
       message: error instanceof Error ? error.message : String(error),
     });
   }
