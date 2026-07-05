@@ -7,6 +7,7 @@ import {
   polygonContains,
   polylineLength,
 } from "../domain/math.js";
+import { SpatialIndex } from "./spatialIndex.js";
 
 const LAYERS = [
   { id: "lanes", label: "车道面", visible: true },
@@ -18,6 +19,11 @@ const LAYERS = [
   { id: "junctions", label: "路口", visible: true },
   { id: "userPoints", label: "坐标点", visible: true },
 ];
+
+const LANE_FILL_BUDGET = 12000;
+const LANE_LINE_BUDGET = 16000;
+const POINT_SYMBOL_BUDGET = 8000;
+const ROAD_OVERVIEW_BUDGET = 20000;
 
 export class CanvasRenderer {
   constructor(canvas) {
@@ -33,6 +39,13 @@ export class CanvasRenderer {
     this.hiddenElements = new Set();
     this.devicePixelRatio = 1;
     this.viewBounds = null;
+    this.roadById = new Map();
+    this.roadIndex = null;
+    this.laneIndex = null;
+    this.objectIndex = null;
+    this.signalIndex = null;
+    this.junctionIndex = null;
+    this.drawScheduled = false;
     this.resize();
   }
 
@@ -45,7 +58,7 @@ export class CanvasRenderer {
     this.devicePixelRatio = window.devicePixelRatio || 1;
     this.canvas.width = Math.max(1, Math.floor(rect.width * this.devicePixelRatio));
     this.canvas.height = Math.max(1, Math.floor(rect.height * this.devicePixelRatio));
-    this.draw();
+    this.requestDraw();
   }
 
   setMap(map) {
@@ -55,6 +68,7 @@ export class CanvasRenderer {
     this.measurePoints = [];
     this.userPoints = [];
     this.hiddenElements.clear();
+    this.buildSpatialIndexes(map);
     this.fitToBounds(map?.bounds);
   }
 
@@ -65,7 +79,7 @@ export class CanvasRenderer {
       if (hitLayerId(this.hovered) === id) this.hovered = null;
       if (hitLayerId(this.selected) === id) this.selected = null;
     }
-    this.draw();
+    this.requestDraw();
   }
 
   setElementVisible(id, visible) {
@@ -73,7 +87,7 @@ export class CanvasRenderer {
     else this.hiddenElements.add(id);
     if (hitIdentity(this.hovered) === id) this.hovered = null;
     if (hitIdentity(this.selected) === id) this.selected = null;
-    this.draw();
+    this.requestDraw();
   }
 
   isElementVisible(id) {
@@ -82,7 +96,7 @@ export class CanvasRenderer {
 
   setViewMode(mode) {
     this.camera.pitch = mode === "3d" ? 0.52 : 0;
-    this.draw();
+    this.requestDraw();
   }
 
   fitToBounds(bounds = this.map?.bounds) {
@@ -98,13 +112,13 @@ export class CanvasRenderer {
       y: (bounds.minY + bounds.maxY) * 0.5,
       zoom: Math.max(0.02, scale),
     };
-    this.draw();
+    this.requestDraw();
   }
 
   panBy(dx, dy) {
     this.camera.x -= dx / this.camera.zoom;
     this.camera.y += dy / (this.camera.zoom * Math.cos(this.camera.pitch || 0));
-    this.draw();
+    this.requestDraw();
   }
 
   zoomAt(screen, delta) {
@@ -114,7 +128,7 @@ export class CanvasRenderer {
     const after = this.screenToWorld(screen);
     this.camera.x += before.x - after.x;
     this.camera.y += before.y - after.y;
-    this.draw();
+    this.requestDraw();
   }
 
   screenToWorld({ x, y }) {
@@ -144,27 +158,24 @@ export class CanvasRenderer {
     const pickBounds = pointBounds(world, tolerance);
 
     if (this.layers.get("lanes")?.visible) {
-      for (const road of this.map.roads) {
+      for (const lane of this.visibleLanes(pickBounds)) {
+        const road = this.roadById.get(String(lane.roadId));
+        if (!road) continue;
         if (!this.isElementVisible(`road:${road.id}`)) continue;
-        if (!boundsIntersects(road.bounds, pickBounds)) continue;
-        for (const lane of road.lanes) {
-          if (!this.isElementVisible(`lane:${lane.key}`)) continue;
-          if (!boundsIntersects(lane.bounds, pickBounds)) continue;
-          if (lane.polygon.length > 2 && polygonContains(world, lane.polygon)) {
-            return { kind: "lane", road, lane, point: world };
-          }
+        if (!this.isElementVisible(`lane:${lane.key}`)) continue;
+        if (lane.polygon.length > 2 && polygonContains(world, lane.polygon)) {
+          return { kind: "lane", road, lane, point: world };
         }
       }
     }
 
     let best = null;
     if (this.layers.get("signals")?.visible) {
-      for (const signal of this.map.signals) {
+      for (const signal of this.visibleSignals(pickBounds)) {
         if (!this.isElementVisible(`road:${signal.roadId}`)) continue;
         if (!this.isElementVisible(`signal:${signal.key}`)) continue;
         if (
           signal.shape?.length > 2 &&
-          boundsIntersects(signal.bounds, pickBounds) &&
           polygonContains(world, signal.shape)
         ) {
           return { kind: "signal", signal, distance: 0, point: world };
@@ -174,12 +185,11 @@ export class CanvasRenderer {
       }
     }
     if (this.layers.get("objects")?.visible) {
-      for (const object of this.map.objects) {
+      for (const object of this.visibleObjects(pickBounds)) {
         if (!this.isElementVisible(`road:${object.roadId}`)) continue;
         if (!this.isElementVisible(`object:${object.key}`)) continue;
         if (
           object.outline?.length > 2 &&
-          boundsIntersects(object.bounds, pickBounds) &&
           polygonContains(world, object.outline)
         ) {
           return { kind: "object", object, distance: 0, point: world };
@@ -189,7 +199,7 @@ export class CanvasRenderer {
       }
     }
     if (this.layers.get("referenceLines")?.visible) {
-      for (const road of this.map.roads) {
+      for (const road of this.visibleRoads(pickBounds)) {
         if (!this.isElementVisible(`road:${road.id}`)) continue;
         const d = pointToPolylineDistance(world, road.referenceLine);
         if (d < tolerance && (!best || d < best.distance)) best = { kind: "road", road, distance: d, point: world };
@@ -204,39 +214,39 @@ export class CanvasRenderer {
       return;
     }
     this.hovered = hit;
-    this.draw();
+    this.requestDraw();
   }
 
   setSelected(hit) {
     this.selected = hit;
-    this.draw();
+    this.requestDraw();
   }
 
   addUserPoint(point, label = "") {
     this.userPoints.push({ point, label, visible: true });
-    this.draw();
+    this.requestDraw();
   }
 
   removeUserPoint(index) {
     if (index < 0 || index >= this.userPoints.length) return;
     this.userPoints.splice(index, 1);
-    this.draw();
+    this.requestDraw();
   }
 
   clearUserPoints() {
     this.userPoints = [];
-    this.draw();
+    this.requestDraw();
   }
 
   addMeasurePoint(point) {
     this.measurePoints.push(point);
-    this.draw();
+    this.requestDraw();
     return this.measureDistance();
   }
 
   clearMeasure() {
     this.measurePoints = [];
-    this.draw();
+    this.requestDraw();
   }
 
   measureDistance() {
@@ -253,7 +263,75 @@ export class CanvasRenderer {
   }
 
   exportPng() {
+    this.draw();
     return this.canvas.toDataURL("image/png");
+  }
+
+  requestDraw() {
+    if (this.drawScheduled) return;
+    if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+      this.draw();
+      return;
+    }
+    this.drawScheduled = true;
+    window.requestAnimationFrame(() => {
+      this.drawScheduled = false;
+      this.draw();
+    });
+  }
+
+  buildSpatialIndexes(map) {
+    this.roadById = new Map();
+    this.roadIndex = null;
+    this.laneIndex = null;
+    this.objectIndex = null;
+    this.signalIndex = null;
+    this.junctionIndex = null;
+    if (!map) return;
+
+    const roads = Array.isArray(map.roads) ? map.roads : [];
+    const lanes = [];
+    const junctionRoads = new Map();
+    for (const road of roads) {
+      this.roadById.set(String(road.id), road);
+      for (const lane of road.lanes ?? []) lanes.push(lane);
+      if (road.junction && road.junction !== "-1") {
+        if (!junctionRoads.has(road.junction)) junctionRoads.set(road.junction, []);
+        junctionRoads.get(road.junction).push(road);
+      }
+    }
+
+    const junctions = [];
+    for (const [id, groupedRoads] of junctionRoads) {
+      const bounds = mergeBounds(groupedRoads.map((road) => road.bounds));
+      if (hasValidBounds(bounds)) junctions.push({ id, roads: groupedRoads, bounds });
+    }
+
+    this.roadIndex = SpatialIndex.fromItems(roads, (road) => road.bounds, map.bounds);
+    this.laneIndex = SpatialIndex.fromItems(lanes, (lane) => lane.bounds, map.bounds, { maxCellsPerItem: 16 });
+    this.objectIndex = SpatialIndex.fromItems(map.objects ?? [], (object) => object.bounds, map.bounds);
+    this.signalIndex = SpatialIndex.fromItems(map.signals ?? [], (signal) => signal.bounds, map.bounds);
+    this.junctionIndex = SpatialIndex.fromItems(junctions, (junction) => junction.bounds, map.bounds);
+  }
+
+  visibleRoads(bounds = this.viewBounds) {
+    return this.roadIndex?.query(bounds) ?? [];
+  }
+
+  visibleLanes(bounds = this.viewBounds) {
+    return this.laneIndex?.query(bounds) ?? [];
+  }
+
+  visibleObjects(bounds = this.viewBounds) {
+    return this.objectIndex?.query(bounds) ?? [];
+  }
+
+  visibleSignals(bounds = this.viewBounds) {
+    return this.signalIndex?.query(bounds) ?? [];
+  }
+
+  visibleJunctions(bounds = this.viewBounds) {
+    return this.junctionIndex?.query(bounds) ?? [];
   }
 
   draw() {
@@ -324,34 +402,38 @@ export class CanvasRenderer {
   }
 
   drawLanes(ctx) {
-    for (const road of this.map.roads) {
+    const lanes = this.visibleLanes();
+    if (lanes.length > LANE_FILL_BUDGET) {
+      this.drawRoadOverview(ctx);
+      return;
+    }
+    for (const lane of lanes) {
+      const road = this.roadById.get(String(lane.roadId));
+      if (!road) continue;
       if (!this.isElementVisible(`road:${road.id}`)) continue;
-      for (const lane of road.lanes) {
-        if (!this.isElementVisible(`lane:${lane.key}`)) continue;
-        if (!boundsIntersects(lane.bounds, this.viewBounds)) continue;
-        if (lane.polygon.length < 3) continue;
-        ctx.fillStyle = lane.color;
-        ctx.globalAlpha = lane.laneType === "driving" ? 0.9 : 0.72;
-        drawPolygon(ctx, lane.polygon, (p) => this.worldToScreen(p));
-        ctx.fill();
-      }
+      if (!this.isElementVisible(`lane:${lane.key}`)) continue;
+      if (lane.polygon.length < 3) continue;
+      ctx.fillStyle = lane.color;
+      ctx.globalAlpha = lane.laneType === "driving" ? 0.9 : 0.72;
+      drawPolygon(ctx, lane.polygon, (p) => this.worldToScreen(p));
+      ctx.fill();
     }
     ctx.globalAlpha = 1;
   }
 
   drawLaneLines(ctx) {
+    const lanes = this.visibleLanes();
+    if (lanes.length > LANE_LINE_BUDGET) return;
     ctx.lineWidth = Math.max(1, Math.min(2, this.camera.zoom * 0.04));
-    for (const road of this.map.roads) {
+    for (const lane of lanes) {
+      const road = this.roadById.get(String(lane.roadId));
+      if (!road) continue;
       if (!this.isElementVisible(`road:${road.id}`)) continue;
-      if (!boundsIntersects(road.bounds, this.viewBounds)) continue;
-      for (const lane of road.lanes) {
-        if (!this.isElementVisible(`lane:${lane.key}`)) continue;
-        if (!boundsIntersects(lane.bounds, this.viewBounds)) continue;
-        if (lane.centerline.length < 2) continue;
-        ctx.strokeStyle = lane.laneId === 0 ? "#e8edf2" : "rgba(230, 236, 241, 0.38)";
-        drawPolyline(ctx, lane.centerline, (p) => this.worldToScreen(p));
-        ctx.stroke();
-      }
+      if (!this.isElementVisible(`lane:${lane.key}`)) continue;
+      if (lane.centerline.length < 2) continue;
+      ctx.strokeStyle = lane.laneId === 0 ? "#e8edf2" : "rgba(230, 236, 241, 0.38)";
+      drawPolyline(ctx, lane.centerline, (p) => this.worldToScreen(p));
+      ctx.stroke();
     }
   }
 
@@ -359,9 +441,8 @@ export class CanvasRenderer {
     ctx.strokeStyle = "#ff7875";
     ctx.lineWidth = 1.5;
     ctx.setLineDash([8, 6]);
-    for (const road of this.map.roads) {
+    for (const road of this.visibleRoads()) {
       if (!this.isElementVisible(`road:${road.id}`)) continue;
-      if (!boundsIntersects(road.bounds, this.viewBounds)) continue;
       drawPolyline(ctx, road.referenceLine, (p) => this.worldToScreen(p));
       ctx.stroke();
     }
@@ -370,7 +451,10 @@ export class CanvasRenderer {
 
   drawObjects(ctx) {
     const pad = 8 / this.camera.zoom;
-    for (const object of this.map.objects) {
+    const objects = this.visibleObjects(expandedBounds(this.viewBounds, pad));
+    let drawn = 0;
+    for (const object of objects) {
+      if (drawn >= POINT_SYMBOL_BUDGET) break;
       if (!this.isElementVisible(`road:${object.roadId}`)) continue;
       if (!this.isElementVisible(`object:${object.key}`)) continue;
       ctx.fillStyle = "#d59b62";
@@ -383,17 +467,22 @@ export class CanvasRenderer {
         ctx.fill();
         ctx.globalAlpha = 1;
         ctx.stroke();
+        drawn += 1;
         continue;
       }
       if (!pointInBounds(object.point, this.viewBounds, pad)) continue;
       const p = this.worldToScreen(object.point);
       ctx.fillRect(p.x - 4, p.y - 4, 8, 8);
+      drawn += 1;
     }
   }
 
   drawSignals(ctx) {
     const pad = 8 / this.camera.zoom;
-    for (const signal of this.map.signals) {
+    const signals = this.visibleSignals(expandedBounds(this.viewBounds, pad));
+    let drawn = 0;
+    for (const signal of signals) {
+      if (drawn >= POINT_SYMBOL_BUDGET) break;
       if (!this.isElementVisible(`road:${signal.roadId}`)) continue;
       if (!this.isElementVisible(`signal:${signal.key}`)) continue;
       ctx.fillStyle = "#ef6f6c";
@@ -406,6 +495,7 @@ export class CanvasRenderer {
         ctx.fill();
         ctx.globalAlpha = 1;
         ctx.stroke();
+        drawn += 1;
         continue;
       }
       if (!pointInBounds(signal.point, this.viewBounds, pad)) continue;
@@ -413,6 +503,7 @@ export class CanvasRenderer {
       ctx.beginPath();
       ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
       ctx.fill();
+      drawn += 1;
     }
   }
 
@@ -436,18 +527,28 @@ export class CanvasRenderer {
   }
 
   drawJunctions(ctx) {
-    const junctionRoads = this.map.roads.filter((road) => road.junction && road.junction !== "-1");
-    const grouped = Map.groupBy ? Map.groupBy(junctionRoads, (road) => road.junction) : groupBy(junctionRoads, (road) => road.junction);
     ctx.strokeStyle = "rgba(57, 198, 163, 0.35)";
     ctx.lineWidth = 2;
-    for (const roads of grouped.values()) {
-      const bounds = mergeBounds(roads.map((road) => road.bounds));
-      if (!Number.isFinite(bounds.minX)) continue;
-      if (!boundsIntersects(bounds, this.viewBounds)) continue;
+    for (const junction of this.visibleJunctions()) {
+      const bounds = junction.bounds;
       const pad = 4;
       const nw = this.worldToScreen({ x: bounds.minX - pad, y: bounds.maxY + pad });
       const se = this.worldToScreen({ x: bounds.maxX + pad, y: bounds.minY - pad });
       ctx.strokeRect(nw.x, nw.y, se.x - nw.x, se.y - nw.y);
+    }
+  }
+
+  drawRoadOverview(ctx) {
+    ctx.strokeStyle = "rgba(88, 151, 176, 0.72)";
+    ctx.lineWidth = Math.max(1, Math.min(2, this.camera.zoom * 0.03));
+    let drawn = 0;
+    for (const road of this.visibleRoads()) {
+      if (drawn >= ROAD_OVERVIEW_BUDGET) break;
+      if (!this.isElementVisible(`road:${road.id}`)) continue;
+      if (road.referenceLine.length < 2) continue;
+      drawPolyline(ctx, road.referenceLine, (p) => this.worldToScreen(p));
+      ctx.stroke();
+      drawn += 1;
     }
   }
 
@@ -557,6 +658,16 @@ function pointBounds(point, pad) {
   return { minX: point.x - pad, minY: point.y - pad, maxX: point.x + pad, maxY: point.y + pad };
 }
 
+function expandedBounds(bounds, pad) {
+  if (!bounds) return bounds;
+  return {
+    minX: bounds.minX - pad,
+    minY: bounds.minY - pad,
+    maxX: bounds.maxX + pad,
+    maxY: bounds.maxY + pad,
+  };
+}
+
 function pointInBounds(point, bounds, pad = 0) {
   if (!bounds) return true;
   return (
@@ -573,14 +684,4 @@ function niceStep(value) {
   if (normalized < 2) return 2 * power;
   if (normalized < 5) return 5 * power;
   return 10 * power;
-}
-
-function groupBy(items, keyFn) {
-  const out = new Map();
-  for (const item of items) {
-    const key = keyFn(item);
-    if (!out.has(key)) out.set(key, []);
-    out.get(key).push(item);
-  }
-  return out;
 }

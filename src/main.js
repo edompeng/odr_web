@@ -4,7 +4,11 @@ import { formatMeters } from "./domain/math.js";
 import { loadViewerSettings, saveViewerSettings } from "./domain/viewerSettings.js";
 import { validateOpenDriveMap } from "./domain/topologyValidator.js";
 import { CanvasRenderer } from "./render/canvasRenderer.js";
-import { buildTreeNodes, describeHit, filterTreeNodes, hitTitle } from "./ui/treeModel.js";
+import { buildTreeNodes, describeHit, filterTreeNodes, getTreeChildren, hitTitle } from "./ui/treeModel.js";
+
+const TREE_RENDER_LIMIT = 1500;
+const TREE_FILTER_SCAN_LIMIT = 12000;
+const AUTO_VALIDATION_COMPLEXITY_LIMIT = 50000;
 
 const SAMPLE_ODR = `<?xml version="1.0" encoding="UTF-8"?>
 <OpenDRIVE>
@@ -235,10 +239,15 @@ class OdrViewerApp {
       this.setCoordinateMode(this.settings.coordinateMode, false);
       this.renderer.setMap(map);
       this.treeNodes = buildTreeNodes(map);
-      this.expandedTreeNodes = new Set(this.treeNodes.map((node) => node.id));
+      this.expandedTreeNodes = new Set();
       this.renderTree();
       this.updateStats();
-      this.runValidation();
+      if (this.shouldAutoValidate(map)) {
+        this.runValidation();
+      } else {
+        this.validationIssues = [];
+        this.el.validationList.textContent = "大地图已跳过自动检查，可点击检查手动运行";
+      }
       this.renderFavorites();
       this.selectHit(null);
       this.updateMeasureStatus();
@@ -254,19 +263,33 @@ class OdrViewerApp {
 
   renderTree() {
     const q = this.el.searchInput.value.trim().toLowerCase();
-    const nodes = filterTreeNodes(this.treeNodes, q);
+    const filterState = { visited: 0, truncated: false };
+    const nodes = filterTreeNodes(this.treeNodes, q, { state: filterState, maxVisited: TREE_FILTER_SCAN_LIMIT });
+    const renderState = { count: 0, truncated: false };
     const fragment = document.createDocumentFragment();
-    for (const node of nodes) this.appendTreeNode(fragment, node, 0, Boolean(q));
+    for (const node of nodes) {
+      this.appendTreeNode(fragment, node, 0, Boolean(q), renderState);
+      if (renderState.truncated) break;
+    }
+    if (filterState.truncated || renderState.truncated) {
+      this.appendTreeNotice(fragment, "结果过多，请搜索更具体的道路、对象或信号");
+    }
     this.el.treeList.replaceChildren(fragment);
   }
 
-  appendTreeNode(parent, node, depth, forceExpanded) {
+  appendTreeNode(parent, node, depth, forceExpanded, state) {
+    if (state.count >= TREE_RENDER_LIMIT) {
+      state.truncated = true;
+      return;
+    }
+    state.count += 1;
     const row = document.createElement("div");
     row.className = "tree-item";
     row.role = "treeitem";
     row.style.setProperty("--tree-depth", depth);
     if (node.hit && !this.renderer.isElementVisible(node.id)) row.classList.add("muted");
-    const hasChildren = (node.children?.length ?? 0) > 0;
+    const cachedChildren = Array.isArray(node.children) ? node.children : null;
+    const hasChildren = cachedChildren ? cachedChildren.length > 0 : typeof node.childrenFactory === "function";
     const expanded = forceExpanded || this.expandedTreeNodes.has(node.id);
     row.setAttribute("aria-expanded", hasChildren ? String(expanded) : "false");
 
@@ -310,8 +333,20 @@ class OdrViewerApp {
     }
     parent.append(row);
     if (hasChildren && expanded) {
-      for (const child of node.children) this.appendTreeNode(parent, child, depth + 1, forceExpanded);
+      for (const child of getTreeChildren(node)) {
+        this.appendTreeNode(parent, child, depth + 1, forceExpanded, state);
+        if (state.truncated) break;
+      }
     }
+  }
+
+  appendTreeNotice(parent, text) {
+    const row = document.createElement("div");
+    row.className = "tree-item muted";
+    row.role = "note";
+    row.style.setProperty("--tree-depth", 0);
+    row.textContent = text;
+    parent.append(row);
   }
 
   setViewMode(mode) {
@@ -395,6 +430,12 @@ class OdrViewerApp {
   runValidation() {
     this.validationIssues = validateOpenDriveMap(this.currentMap);
     this.renderValidation();
+  }
+
+  shouldAutoValidate(map) {
+    const stats = map?.stats;
+    if (!stats) return true;
+    return stats.roads + stats.lanes + stats.objects + stats.signals <= AUTO_VALIDATION_COMPLEXITY_LIMIT;
   }
 
   renderValidation() {

@@ -15,6 +15,7 @@ namespace odrweb {
 namespace {
 
 constexpr double kDefaultStepMeters = 2.5;
+constexpr int kMaxGeometrySegments = 256;
 
 double NumberAttr(const XmlNode& node, const std::string& key,
                   double fallback = 0.0) {
@@ -66,7 +67,8 @@ double PolynomialAt(const std::vector<Width>& entries, double s,
                     double fallback = 0.0);
 
 Point SampleSpiralApprox(const Geometry& geometry, double ds) {
-  const int steps = std::max(2, static_cast<int>(std::ceil(ds / 1.5)));
+  const int steps = std::max(
+      2, std::min(kMaxGeometrySegments, static_cast<int>(std::ceil(ds / 1.5))));
   double x = geometry.x;
   double y = geometry.y;
   double hdg = geometry.hdg;
@@ -138,11 +140,19 @@ Point SampleGeometryAt(const Geometry& geometry, double ds) {
           geometry.s + ds};
 }
 
+double SamplingStepForLength(double length,
+                             double base_step_meters = kDefaultStepMeters) {
+  return std::max(base_step_meters,
+                  std::max(0.0, length) / kMaxGeometrySegments);
+}
+
 std::vector<Point> SampleGeometry(const Geometry& geometry,
-                                  double step_meters = kDefaultStepMeters) {
+                                  double step_meters = 0.0) {
   const double length = std::max(0.0, geometry.length);
+  const double effective_step =
+      step_meters > 0.0 ? step_meters : SamplingStepForLength(length);
   const int steps =
-      std::max(2, static_cast<int>(std::ceil(length / step_meters)) + 1);
+      std::max(2, static_cast<int>(std::ceil(length / effective_step)) + 1);
   std::vector<Point> points;
   points.reserve(static_cast<std::size_t>(steps));
   for (int i = 0; i < steps; ++i) {

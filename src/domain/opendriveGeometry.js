@@ -1,6 +1,7 @@
 import { boundsOf, cubic } from "./math.js";
 
 const DEFAULT_STEP_METERS = 2.5;
+const MAX_GEOMETRY_SEGMENTS = 256;
 
 function normalFromHeading(hdg) {
   return { x: -Math.sin(hdg), y: Math.cos(hdg) };
@@ -13,7 +14,11 @@ function attrNumber(node, name, fallback = 0) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-export function sampleGeometry(geometry, stepMeters = DEFAULT_STEP_METERS) {
+export function samplingStepForLength(length, baseStepMeters = DEFAULT_STEP_METERS) {
+  return Math.max(baseStepMeters, Math.max(0, length) / MAX_GEOMETRY_SEGMENTS);
+}
+
+export function sampleGeometry(geometry, stepMeters = samplingStepForLength(geometry.length)) {
   const length = Math.max(0, geometry.length);
   const steps = Math.max(2, Math.ceil(length / stepMeters) + 1);
   const points = [];
@@ -74,7 +79,7 @@ export function sampleGeometryAt(geometry, ds) {
 }
 
 function sampleSpiralApprox(geometry, ds) {
-  const steps = Math.max(2, Math.ceil(ds / 1.5));
+  const steps = Math.max(2, Math.min(MAX_GEOMETRY_SEGMENTS, Math.ceil(ds / 1.5)));
   let x = geometry.x;
   let y = geometry.y;
   let hdg = geometry.hdg;

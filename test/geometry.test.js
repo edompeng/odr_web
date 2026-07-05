@@ -4,6 +4,7 @@ import test from "node:test";
 import { CoordinateFormatter, parseCoordinateInput, serializeWithDisplayCoordinates } from "../src/domain/coordinates.js";
 import { parseParserWorkerRequest } from "../src/domain/parserWorkerProtocol.js";
 import { createDefaultSettings, mergeViewerSettings } from "../src/domain/viewerSettings.js";
+import { SpatialIndex } from "../src/render/spatialIndex.js";
 import {
   boundsOf,
   hasValidBounds,
@@ -16,6 +17,7 @@ import {
   elevationAt,
   lanePolygonFromCenterline,
   lanePolygonFromOffsets,
+  samplingStepForLength,
   sampleGeometry,
   sampleGeometryAt,
   segmentPolylineByS,
@@ -31,6 +33,15 @@ test("samples line geometry at expected endpoints", () => {
   assert.equal(points[0].y, -4);
   assert.equal(points.at(-1).x, 30);
   assert.equal(points.at(-1).y, -4);
+});
+
+test("default geometry sampling caps long segments", () => {
+  assert.equal(samplingStepForLength(20), 2.5);
+  assert.equal(samplingStepForLength(5000), 5000 / 256);
+  const geometry = { s: 0, x: 0, y: 0, hdg: 0, length: 5000, kind: "line", data: {} };
+  const points = sampleGeometry(geometry);
+  assert.equal(points.length, 257);
+  assert.equal(points.at(-1).x, 5000);
 });
 
 test("samples arc geometry with changing heading", () => {
@@ -257,4 +268,46 @@ test("parser worker returns decoded XML when WASM parsing fails", async () => {
   assert.equal(response.fileName, "large.xodr");
   assert.equal(response.text, "<OpenDRIVE/>");
   assert.equal(response.message, "OOM");
+});
+
+test("parser worker does not return very large XML to the main thread", async () => {
+  const response = await parseParserWorkerRequest(
+    { id: 8, fileName: "huge.xodr", text: "<OpenDRIVE/>" },
+    {
+      mode: "wasm",
+      parse() {
+        throw new Error("OOM");
+      },
+    },
+    undefined,
+    { maxRecoveryTextLength: 4 },
+  );
+
+  assert.equal(response.ok, false);
+  assert.equal(response.recoverable, false);
+  assert.equal(response.text, undefined);
+  assert.match(response.message, /JavaScript fallback is disabled/);
+});
+
+test("spatial index returns only items intersecting query bounds", () => {
+  const items = [
+    { id: "a", bounds: { minX: 0, minY: 0, maxX: 10, maxY: 10 } },
+    { id: "b", bounds: { minX: 50, minY: 50, maxX: 60, maxY: 60 } },
+    { id: "c", bounds: { minX: 100, minY: 100, maxX: 110, maxY: 110 } },
+  ];
+  const index = SpatialIndex.fromItems(items, (item) => item.bounds, {
+    minX: 0,
+    minY: 0,
+    maxX: 120,
+    maxY: 120,
+  });
+
+  assert.deepEqual(
+    index.query({ minX: 45, minY: 45, maxX: 65, maxY: 65 }).map((item) => item.id),
+    ["b"],
+  );
+  assert.deepEqual(
+    index.query({ minX: -5, minY: -5, maxX: 12, maxY: 12 }).map((item) => item.id),
+    ["a"],
+  );
 });

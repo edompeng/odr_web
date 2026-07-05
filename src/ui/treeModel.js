@@ -8,12 +8,12 @@ export function buildTreeNodes(map) {
     label: `${road.id} ${road.name || ""}`.trim(),
     search: `road ${road.id} ${road.name}`,
     hit: { kind: "road", road },
-    children: [
+    childrenFactory: () => [
       groupNode(
         `road:${road.id}:lanes`,
         "lanes",
         `车道 (${road.lanes.filter((lane) => lane.laneId !== 0).length})`,
-        road.lanes
+        () => road.lanes
           .filter((lane) => lane.laneId !== 0)
           .map((lane) => ({
             id: `lane:${lane.key}`,
@@ -28,7 +28,7 @@ export function buildTreeNodes(map) {
         `road:${road.id}:objects`,
         "objects",
         `对象 (${road.objects.length})`,
-        road.objects.map((object) => ({
+        () => road.objects.map((object) => ({
           id: `object:${object.key}`,
           kind: "obj",
           label: object.id || object.type || "object",
@@ -41,7 +41,7 @@ export function buildTreeNodes(map) {
         `road:${road.id}:signals`,
         "signals",
         `信号 (${road.signals.length})`,
-        road.signals.map((signal) => ({
+        () => road.signals.map((signal) => ({
           id: `signal:${signal.key}`,
           kind: "sig",
           label: signal.id || signal.type || "signal",
@@ -54,10 +54,27 @@ export function buildTreeNodes(map) {
   }));
 }
 
-export function filterTreeNodes(nodes, query) {
+export function getTreeChildren(node) {
+  if (Array.isArray(node.children)) return node.children;
+  if (typeof node.childrenFactory === "function") {
+    node.children = node.childrenFactory();
+    node.childrenFactory = null;
+    return node.children;
+  }
+  return [];
+}
+
+export function filterTreeNodes(nodes, query, options = {}) {
   if (!query) return nodes;
+  const state = options.state ?? { visited: 0, truncated: false };
+  const maxVisited = options.maxVisited ?? 12000;
   return nodes.flatMap((node) => {
-    const children = filterTreeNodes(node.children ?? [], query);
+    if (state.visited >= maxVisited) {
+      state.truncated = true;
+      return [];
+    }
+    state.visited += 1;
+    const children = filterTreeNodes(getTreeChildren(node), query, { ...options, state, maxVisited });
     if (node.search.toLowerCase().includes(query) || children.length > 0) {
       return [{ ...node, children }];
     }
@@ -118,6 +135,7 @@ function groupNode(id, kind, label, children) {
     label,
     search: `${kind} ${label}`,
     hit: null,
-    children,
+    childrenFactory: typeof children === "function" ? children : null,
+    children: Array.isArray(children) ? children : null,
   };
 }
