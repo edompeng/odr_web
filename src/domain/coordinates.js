@@ -25,24 +25,21 @@ export class CoordinateFormatter {
     if (!point) return {};
     if (this.mode === "lonlat" && this.projection) {
       const lonLat = transverseMercatorToLonLat(point.x, point.y, this.projection);
-      return {
-        longitude: round(lonLat.longitude, 8),
-        latitude: round(lonLat.latitude, 8),
-        ...(Number.isFinite(point.hdg) ? { hdg: round(point.hdg, 6) } : {}),
-        ...(Number.isFinite(point.s) ? { s: round(point.s, 3) } : {}),
-      };
+      if (isValidLonLat(lonLat)) {
+        return {
+          longitude: round(lonLat.longitude, 8),
+          latitude: round(lonLat.latitude, 8),
+          ...(Number.isFinite(point.hdg) ? { hdg: round(point.hdg, 6) } : {}),
+          ...(Number.isFinite(point.s) ? { s: round(point.s, 3) } : {}),
+        };
+      }
     }
-    return {
-      easting: round(point.x, 3),
-      northing: round(point.y, 3),
-      ...(Number.isFinite(point.hdg) ? { hdg: round(point.hdg, 6) } : {}),
-      ...(Number.isFinite(point.s) ? { s: round(point.s, 3) } : {}),
-    };
+    return projectedPoint(point);
   }
 
   status(point) {
     const display = this.point(point);
-    if (this.mode === "lonlat" && this.projection) {
+    if (Number.isFinite(display.longitude) && Number.isFinite(display.latitude)) {
       return `lon: ${display.longitude.toFixed(8)}, lat: ${display.latitude.toFixed(8)}`;
     }
     return `E: ${display.easting.toFixed(3)}, N: ${display.northing.toFixed(3)}`;
@@ -56,6 +53,15 @@ export class CoordinateFormatter {
     }
     return { x: values.x, y: values.y, z };
   }
+}
+
+function projectedPoint(point) {
+  return {
+    easting: round(point.x, 3),
+    northing: round(point.y, 3),
+    ...(Number.isFinite(point.hdg) ? { hdg: round(point.hdg, 6) } : {}),
+    ...(Number.isFinite(point.s) ? { s: round(point.s, 3) } : {}),
+  };
 }
 
 export function serializeWithDisplayCoordinates(value, formatter) {
@@ -122,6 +128,15 @@ function tokenValue(text, key) {
 function numberToken(text, key, fallback) {
   const value = Number(tokenValue(text, key));
   return Number.isFinite(value) ? value : fallback;
+}
+
+function isValidLonLat(point) {
+  return (
+    Number.isFinite(point.longitude) &&
+    Number.isFinite(point.latitude) &&
+    Math.abs(point.longitude) <= 180 &&
+    Math.abs(point.latitude) <= 90
+  );
 }
 
 function transverseMercatorToLonLat(easting, northing, projection) {

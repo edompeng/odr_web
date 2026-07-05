@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CoordinateFormatter, parseCoordinateInput } from "../src/domain/coordinates.js";
+import { CoordinateFormatter, parseCoordinateInput, serializeWithDisplayCoordinates } from "../src/domain/coordinates.js";
 import { createDefaultSettings, mergeViewerSettings } from "../src/domain/viewerSettings.js";
 import {
   boundsOf,
@@ -109,6 +109,17 @@ test("coordinate formatter supports Transverse Mercator geoReference", () => {
   const world = formatter.worldPoint({ x: 117, y: 0 });
   assert.ok(Math.abs(world.x - 500000) < 1e-6);
   assert.ok(Math.abs(world.y) < 1e-6);
+});
+
+test("coordinate formatter does not serialize invalid longitude latitude as null", () => {
+  const formatter = new CoordinateFormatter({
+    header: { geoReference: "+proj=utm +zone=50 +datum=WGS84 +units=m +no_defs" },
+  });
+  formatter.setMode("lonlat");
+
+  const json = formatter.point({ x: 1e100, y: 1e100 });
+  assert.deepEqual(json, { easting: 1e100, northing: 1e100 });
+  assert.equal(serializeWithDisplayCoordinates({ point: { x: 1e100, y: 1e100 } }, formatter).includes("null"), false);
 });
 
 test("coordinate input parser accepts comma, space, and semicolon separated points", () => {

@@ -57,6 +57,7 @@ button:hover {
   min-height: 0;
   flex-direction: column;
   gap: 12px;
+  overflow: auto;
   border-right: 1px solid var(--line);
   background: var(--panel);
   padding: 14px;
@@ -179,8 +180,8 @@ button:hover {
 }
 
 .tree-block {
-  min-height: 0;
-  flex: 1;
+  min-height: 260px;
+  flex: 0 0 auto;
 }
 
 .search-input {
@@ -194,8 +195,8 @@ button:hover {
 }
 
 .tree-list {
-  min-height: 0;
-  flex: 1;
+  min-height: 220px;
+  max-height: 42vh;
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
