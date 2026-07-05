@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { CoordinateFormatter, parseCoordinateInput, serializeWithDisplayCoordinates } from "../src/domain/coordinates.js";
+import { parseParserWorkerRequest } from "../src/domain/parserWorkerProtocol.js";
 import { createDefaultSettings, mergeViewerSettings } from "../src/domain/viewerSettings.js";
 import {
   boundsOf,
@@ -238,4 +239,22 @@ test("viewer settings merge persisted values without trusting unknown keys", () 
     layers: { lanes: false, signals: true },
     favorites: [{ id: "road:1", title: "Road 1" }],
   });
+});
+
+test("parser worker returns decoded XML when WASM parsing fails", async () => {
+  const response = await parseParserWorkerRequest(
+    { id: 7, fileName: "large.xodr", text: "<OpenDRIVE/>" },
+    {
+      mode: "wasm",
+      parse() {
+        throw new Error("OOM");
+      },
+    },
+  );
+
+  assert.equal(response.ok, false);
+  assert.equal(response.recoverable, true);
+  assert.equal(response.fileName, "large.xodr");
+  assert.equal(response.text, "<OpenDRIVE/>");
+  assert.equal(response.message, "OOM");
 });
