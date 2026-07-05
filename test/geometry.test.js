@@ -93,7 +93,7 @@ test("coordinate formatter switches between UTM and longitude latitude display",
   formatter.setMap({ header: { geoReference: "" } });
   formatter.setMode("lonlat");
   assert.equal(formatter.mode, "utm");
-  assert.deepEqual(formatter.point({ x: 1, y: 2 }), { easting: 1, northing: 2 });
+  assert.deepEqual(formatter.point({ x: 1, y: 2 }), { easting: 1, northing: 2, height: 0 });
 });
 
 test("coordinate formatter supports Transverse Mercator geoReference", () => {
@@ -138,8 +138,29 @@ test("coordinate formatter does not serialize invalid longitude latitude as null
   formatter.setMode("lonlat");
 
   const json = formatter.point({ x: 1e100, y: 1e100 });
-  assert.deepEqual(json, { easting: 1e100, northing: 1e100 });
+  assert.deepEqual(json, { easting: 1e100, northing: 1e100, height: 0 });
   assert.equal(serializeWithDisplayCoordinates({ point: { x: 1e100, y: 1e100 } }, formatter).includes("null"), false);
+});
+
+test("coordinate formatter displays height in all coordinate modes", () => {
+  const formatter = new CoordinateFormatter({
+    header: { geoReference: "+proj=utm +zone=50 +datum=WGS84 +units=m +no_defs" },
+  });
+
+  assert.deepEqual(formatter.point({ x: 500000, y: 0, z: 12.3456 }), {
+    easting: 500000,
+    northing: 0,
+    height: 12.346,
+  });
+  assert.equal(formatter.status({ x: 500000, y: 0, z: 12.3456 }), "E: 500000.000, N: 0.000, H: 12.346");
+
+  formatter.setMode("lonlat");
+  const lonLat = formatter.point({ x: 500000, y: 0, z: 12.3456 });
+  assert.equal(lonLat.altitude, 12.346);
+  assert.equal(formatter.status({ x: 500000, y: 0, z: 12.3456 }), "lon: 117.00000000, lat: 0.00000000, H: 12.346");
+
+  const serialized = serializeWithDisplayCoordinates({ point: { x: 500000, y: 0, z: 12.3456 } }, formatter);
+  assert.equal(serialized.includes('"altitude": 12.346'), true);
 });
 
 test("coordinate input parser accepts comma, space, and semicolon separated points", () => {

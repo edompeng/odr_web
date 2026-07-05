@@ -28,6 +28,7 @@ export class CoordinateFormatter {
         return {
           longitude: round(lonLat.longitude, 8),
           latitude: round(lonLat.latitude, 8),
+          altitude: pointHeight(point),
           ...(Number.isFinite(point.hdg) ? { hdg: round(point.hdg, 6) } : {}),
           ...(Number.isFinite(point.s) ? { s: round(point.s, 3) } : {}),
         };
@@ -39,9 +40,9 @@ export class CoordinateFormatter {
   status(point) {
     const display = this.point(point);
     if (Number.isFinite(display.longitude) && Number.isFinite(display.latitude)) {
-      return `lon: ${display.longitude.toFixed(8)}, lat: ${display.latitude.toFixed(8)}`;
+      return `lon: ${display.longitude.toFixed(8)}, lat: ${display.latitude.toFixed(8)}, H: ${display.altitude.toFixed(3)}`;
     }
-    return `E: ${display.easting.toFixed(3)}, N: ${display.northing.toFixed(3)}`;
+    return `E: ${display.easting.toFixed(3)}, N: ${display.northing.toFixed(3)}, H: ${display.height.toFixed(3)}`;
   }
 
   worldPoint(values) {
@@ -58,9 +59,16 @@ function projectedPoint(point) {
   return {
     easting: round(point.x, 3),
     northing: round(point.y, 3),
+    height: pointHeight(point),
     ...(Number.isFinite(point.hdg) ? { hdg: round(point.hdg, 6) } : {}),
     ...(Number.isFinite(point.s) ? { s: round(point.s, 3) } : {}),
   };
+}
+
+function pointHeight(point) {
+  if (Number.isFinite(point.z)) return round(point.z, 3);
+  if (Number.isFinite(point.height)) return round(point.height, 3);
+  return 0;
 }
 
 export function serializeWithDisplayCoordinates(value, formatter) {
