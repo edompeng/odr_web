@@ -111,6 +111,26 @@ test("coordinate formatter supports Transverse Mercator geoReference", () => {
   assert.ok(Math.abs(world.y) < 1e-6);
 });
 
+test("coordinate formatter uses proj geoReference strings and header offsets", () => {
+  const formatter = new CoordinateFormatter({
+    header: {
+      geoReference:
+        "+proj=tmerc +ellps=WGS84 +datum=WGS84 +k_0=1 +lon_0=100.761986185656 +lat_0=0 +x_0=0 +y_0=-3080868.788728 +units=m",
+      xOffset: 0,
+      yOffset: -3080868.788728,
+    },
+  });
+  formatter.setMode("lonlat");
+
+  const point = formatter.point({ x: 0, y: 0 });
+  assert.ok(Math.abs(point.longitude - 100.761986185656) < 1e-8);
+  assert.ok(Math.abs(point.latitude) < 1e-8);
+
+  const world = formatter.worldPoint({ x: 100.761986185656, y: 0 });
+  assert.ok(Math.abs(world.x) < 1e-6);
+  assert.ok(Math.abs(world.y) < 1e-6);
+});
+
 test("coordinate formatter does not serialize invalid longitude latitude as null", () => {
   const formatter = new CoordinateFormatter({
     header: { geoReference: "+proj=utm +zone=50 +datum=WGS84 +units=m +no_defs" },

@@ -552,8 +552,16 @@ OpenDriveMap OpenDriveParser::Parse(const std::string& xml,
     map.header.rev_major = StringAttr(*header, "revMajor");
     map.header.rev_minor = StringAttr(*header, "revMinor");
     map.header.vendor = StringAttr(*header, "vendor");
+    map.header.x_offset = NumberAttr(*header, "xOffset",
+                                     NumberAttr(*header, "x_offs", 0.0));
+    map.header.y_offset = NumberAttr(*header, "yOffset",
+                                     NumberAttr(*header, "y_offs", 0.0));
     if (const XmlNode* geo = header->FirstChild("geoReference")) {
       map.header.geo_reference = geo->text;
+    }
+    if (const XmlNode* offset = header->FirstChild("offset")) {
+      map.header.x_offset = NumberAttr(*offset, "x", map.header.x_offset);
+      map.header.y_offset = NumberAttr(*offset, "y", map.header.y_offset);
     }
   }
 

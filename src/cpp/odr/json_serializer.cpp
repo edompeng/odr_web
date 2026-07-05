@@ -199,6 +199,8 @@ std::string SerializeOpenDriveMap(const OpenDriveMap& map) {
   JsonString(os, map.header.vendor);
   os << ",\"geoReference\":";
   JsonString(os, map.header.geo_reference);
+  os << ",\"xOffset\":" << map.header.x_offset;
+  os << ",\"yOffset\":" << map.header.y_offset;
   os << "},\"roads\":";
   ArrayJson(os, map.roads, RoadJson);
   os << ",\"objects\":";

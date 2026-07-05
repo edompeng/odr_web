@@ -106,6 +106,8 @@ struct Header {
   std::string rev_minor;
   std::string vendor;
   std::string geo_reference;
+  double x_offset = 0.0;
+  double y_offset = 0.0;
 };
 
 struct Stats {

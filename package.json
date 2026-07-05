@@ -7,5 +7,8 @@
     "build": "node scripts/build.mjs",
     "build:wasm": "./wasm_build.sh",
     "test": "node --test"
+  },
+  "dependencies": {
+    "proj4": "^2.20.9"
   }
 }

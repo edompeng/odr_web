@@ -11,6 +11,7 @@ const char kSample[] = R"xml(<?xml version="1.0" encoding="UTF-8"?>
 <OpenDRIVE>
   <header revMajor="1" revMinor="4" name="sample" vendor="test">
     <geoReference><![CDATA[+proj=tmerc +lat_0=0]]></geoReference>
+    <offset x="12.5" y="-34.25"/>
   </header>
   <road name="Main Road" length="120" id="1" junction="-1">
     <planView>
@@ -126,6 +127,10 @@ void TestParseMapStats() {
   Check(map.header.name == "sample", "header name mismatch");
   Check(map.header.geo_reference.find("+proj=tmerc") != std::string::npos,
         "geoReference not parsed");
+  Check(std::abs(map.header.x_offset - 12.5) < 1e-9,
+        "header x offset mismatch");
+  Check(std::abs(map.header.y_offset + 34.25) < 1e-9,
+        "header y offset mismatch");
   Check(map.stats.roads == 1, "road count mismatch");
   Check(map.stats.lanes == 2, "lane count mismatch");
   Check(map.stats.objects == 1, "object count mismatch");
@@ -155,6 +160,8 @@ void TestJsonExport() {
         "fileName missing from JSON");
   Check(json.find("\"roads\":1") != std::string::npos,
         "stats missing from JSON");
+  Check(json.find("\"xOffset\":12.5") != std::string::npos,
+        "header x offset missing from JSON");
   Check(json.find("\"laneType\":\"driving\"") != std::string::npos,
         "lane type missing from JSON");
 }

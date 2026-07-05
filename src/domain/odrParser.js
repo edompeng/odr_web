@@ -293,6 +293,7 @@ export class OpenDriveParser {
     }
 
     const header = doc.querySelector("OpenDRIVE > header");
+    const headerOffset = doc.querySelector("OpenDRIVE > header > offset");
     const roads = [...doc.querySelectorAll("OpenDRIVE > road")].map((roadNode) => {
       const road = {
         id: attr(roadNode, "id"),
@@ -356,6 +357,8 @@ export class OpenDriveParser {
         revMinor: attr(header, "revMinor"),
         vendor: attr(header, "vendor"),
         geoReference: doc.querySelector("OpenDRIVE > header > geoReference")?.textContent?.trim() ?? "",
+        xOffset: attrNumber(headerOffset, "x", attrNumber(header, "xOffset", attrNumber(header, "x_offs"))),
+        yOffset: attrNumber(headerOffset, "y", attrNumber(header, "yOffset", attrNumber(header, "y_offs"))),
       },
       roads,
       objects,
