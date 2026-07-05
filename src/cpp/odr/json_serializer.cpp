@@ -45,7 +45,7 @@ void JsonString(std::ostream& os, const std::string& value) {
 
 void PointJson(std::ostream& os, const Point& point) {
   os << "{\"x\":" << point.x << ",\"y\":" << point.y << ",\"hdg\":" << point.hdg
-     << ",\"s\":" << point.s << "}";
+     << ",\"s\":" << point.s << ",\"z\":" << point.z << "}";
 }
 
 void BoundsJson(std::ostream& os, const Bounds& bounds) {

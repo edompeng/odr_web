@@ -10,6 +10,7 @@ struct Point {
   double y = 0.0;
   double hdg = 0.0;
   double s = 0.0;
+  double z = 0.0;
 };
 
 struct Bounds {

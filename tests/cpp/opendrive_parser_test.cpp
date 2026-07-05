@@ -18,6 +18,10 @@ const char kSample[] = R"xml(<?xml version="1.0" encoding="UTF-8"?>
       <geometry s="0" x="0" y="0" hdg="0" length="70"><line/></geometry>
       <geometry s="70" x="70" y="0" hdg="0" length="50"><arc curvature="0.018"/></geometry>
     </planView>
+    <elevationProfile>
+      <elevation s="0" a="1" b="0.1" c="0" d="0"/>
+      <elevation s="70" a="10" b="0" c="0" d="0"/>
+    </elevationProfile>
     <lanes>
       <laneSection s="0">
         <left>
@@ -146,12 +150,21 @@ void TestGeometryAndLaneMesh() {
   const odrweb::Road& road = map.roads.front();
   Check(road.reference_line.size() > 20, "reference line undersampled");
   Check(road.reference_line.front().x == 0.0, "reference start mismatch");
+  Check(std::abs(road.reference_line.front().z - 1.0) < 1e-9,
+        "reference elevation start mismatch");
   Check(road.reference_line.back().x > 110.0, "arc endpoint mismatch");
+  Check(std::abs(road.reference_line.back().z - 10.0) < 1e-9,
+        "reference elevation end mismatch");
   Check(road.lanes.size() == 3, "lane shape count mismatch");
   Check(road.lanes.front().polygon.size() == road.reference_line.size() * 2,
         "lane polygon size mismatch");
+  Check(std::abs(road.lanes.front().centerline.front().z - 1.0) < 1e-9,
+        "lane elevation was not preserved");
   Check(road.objects.front().point.y < 0.0, "object projection mismatch");
+  Check(road.objects.front().point.z > 4.0, "object elevation mismatch");
   Check(road.signals.front().point.y > 0.0, "signal projection mismatch");
+  Check(std::abs(road.signals.front().point.z - 10.0) < 1e-9,
+        "signal elevation mismatch");
 }
 
 void TestJsonExport() {
@@ -162,6 +175,8 @@ void TestJsonExport() {
         "stats missing from JSON");
   Check(json.find("\"xOffset\":12.5") != std::string::npos,
         "header x offset missing from JSON");
+  Check(json.find("\"z\":1") != std::string::npos,
+        "point elevation missing from JSON");
   Check(json.find("\"laneType\":\"driving\"") != std::string::npos,
         "lane type missing from JSON");
 }

@@ -6,6 +6,7 @@ import {
   sampleGeometry,
   segmentPolylineByS,
   widthAt,
+  elevationAt,
 } from "./opendriveGeometry.js";
 import { boundsOf, hasValidBounds, mergeBounds } from "./math.js";
 
@@ -98,9 +99,10 @@ function parseLanes(sectionNode, side) {
 function sampleRoadReferenceLine(roadNode) {
   const planView = firstDirect(roadNode, "planView");
   const geometries = directChildren(planView, "geometry").map(parseGeometryNode);
+  const elevations = parsePolynomialEntries(firstDirect(roadNode, "elevationProfile"), "elevation");
   const points = [];
   for (const geometry of geometries) {
-    const sampled = sampleGeometry(geometry);
+    const sampled = sampleGeometry(geometry).map((point) => ({ ...point, z: elevationAt(elevations, point.s) }));
     if (points.length > 0 && sampled.length > 0) sampled.shift();
     points.push(...sampled);
   }
@@ -222,7 +224,9 @@ function projectRoadPoint(road, s, t) {
   return {
     x: reference.x - Math.sin(reference.hdg) * t,
     y: reference.y + Math.cos(reference.hdg) * t,
+    z: reference.z ?? 0,
     hdg: reference.hdg,
+    s: reference.s,
   };
 }
 
@@ -230,6 +234,7 @@ function transformLocalPoint(origin, hdg, u, v) {
   return {
     x: origin.x + Math.cos(hdg) * u - Math.sin(hdg) * v,
     y: origin.y + Math.sin(hdg) * u + Math.cos(hdg) * v,
+    z: origin.z ?? 0,
     hdg,
     s: origin.s,
   };

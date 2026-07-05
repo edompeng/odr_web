@@ -60,6 +60,11 @@ struct Geometry {
   bool normalized = true;
 };
 
+std::vector<Width> ParsePolynomialEntries(const XmlNode& parent,
+                                          const std::string& child_name);
+double PolynomialAt(const std::vector<Width>& entries, double s,
+                    double fallback = 0.0);
+
 Point SampleSpiralApprox(const Geometry& geometry, double ds) {
   const int steps = std::max(2, static_cast<int>(std::ceil(ds / 1.5)));
   double x = geometry.x;
@@ -192,8 +197,15 @@ std::vector<Point> SampleReferenceLine(const XmlNode& road_node) {
   std::vector<Point> points;
   const XmlNode* plan_view = road_node.FirstChild("planView");
   if (!plan_view) return points;
+  std::vector<Width> elevations;
+  if (const XmlNode* elevation_profile = road_node.FirstChild("elevationProfile")) {
+    elevations = ParsePolynomialEntries(*elevation_profile, "elevation");
+  }
   for (const XmlNode* geometry_node : plan_view->Children("geometry")) {
     std::vector<Point> sampled = SampleGeometry(ParseGeometry(*geometry_node));
+    for (Point& point : sampled) {
+      point.z = PolynomialAt(elevations, point.s, 0.0);
+    }
     if (!points.empty() && !sampled.empty()) sampled.erase(sampled.begin());
     points.insert(points.end(), sampled.begin(), sampled.end());
   }
@@ -215,7 +227,8 @@ Point InterpolatePointAtS(const std::vector<Point>& points, double s) {
   const double ratio = (s - prev.s) / span;
   return {prev.x + (next.x - prev.x) * ratio,
           prev.y + (next.y - prev.y) * ratio,
-          prev.hdg + (next.hdg - prev.hdg) * ratio, s};
+          prev.hdg + (next.hdg - prev.hdg) * ratio, s,
+          prev.z + (next.z - prev.z) * ratio};
 }
 
 std::vector<Point> SegmentReferenceLine(const std::vector<Point>& points,
@@ -271,7 +284,7 @@ std::vector<Width> ParsePolynomialEntries(const XmlNode& parent,
 }
 
 double PolynomialAt(const std::vector<Width>& entries, double s,
-                    double fallback = 0.0) {
+                    double fallback) {
   if (entries.empty()) return fallback;
   const Width* selected = &entries.front();
   for (const Width& entry : entries) {
@@ -342,6 +355,7 @@ Point TransformLocalPoint(const Point& origin, double hdg, double u, double v) {
   out.y = origin.y + std::sin(hdg) * u + std::cos(hdg) * v;
   out.hdg = hdg;
   out.s = origin.s;
+  out.z = origin.z;
   return out;
 }
 

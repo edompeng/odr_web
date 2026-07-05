@@ -97,7 +97,7 @@ function sampleSpiralApprox(geometry, ds) {
 export function offsetPolyline(centerline, offset) {
   return centerline.map((p) => {
     const normal = normalFromHeading(p.hdg);
-    return { x: p.x + normal.x * offset, y: p.y + normal.y * offset, hdg: p.hdg, s: p.s };
+    return { x: p.x + normal.x * offset, y: p.y + normal.y * offset, z: p.z ?? 0, hdg: p.hdg, s: p.s };
   });
 }
 
@@ -105,7 +105,7 @@ export function offsetPolylineByOffsets(centerline, offsets) {
   return centerline.map((p, index) => {
     const normal = normalFromHeading(p.hdg);
     const offset = offsets[index] ?? 0;
-    return { x: p.x + normal.x * offset, y: p.y + normal.y * offset, hdg: p.hdg, s: p.s };
+    return { x: p.x + normal.x * offset, y: p.y + normal.y * offset, z: p.z ?? 0, hdg: p.hdg, s: p.s };
   });
 }
 
@@ -141,6 +141,7 @@ export function interpolatePointAtS(points, s) {
   return {
     x: prev.x + (next.x - prev.x) * ratio,
     y: prev.y + (next.y - prev.y) * ratio,
+    z: (prev.z ?? 0) + ((next.z ?? 0) - (prev.z ?? 0)) * ratio,
     hdg: prev.hdg + (next.hdg - prev.hdg) * ratio,
     s,
   };
@@ -216,4 +217,13 @@ export function widthAt(widthEntries, localS) {
     if (entry.sOffset <= localS) selected = entry;
   }
   return Math.max(0, cubic(selected, Math.max(0, localS - selected.sOffset)));
+}
+
+export function elevationAt(elevationEntries, s) {
+  if (elevationEntries.length === 0) return 0;
+  let selected = elevationEntries[0];
+  for (const entry of elevationEntries) {
+    if (entry.sOffset <= s) selected = entry;
+  }
+  return cubic(selected, Math.max(0, s - selected.sOffset));
 }

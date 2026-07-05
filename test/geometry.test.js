@@ -12,6 +12,7 @@ import {
   polylineLength,
 } from "../src/domain/math.js";
 import {
+  elevationAt,
   lanePolygonFromCenterline,
   lanePolygonFromOffsets,
   sampleGeometry,
@@ -48,15 +49,25 @@ test("evaluates lane width polynomial by active sOffset", () => {
   assert.equal(widthAt(widths, 12), 5);
 });
 
+test("evaluates road elevation polynomial by active s", () => {
+  const elevations = [
+    { sOffset: 0, a: 1, b: 0.5, c: 0, d: 0 },
+    { sOffset: 10, a: 10, b: 1, c: 0, d: 0 },
+  ];
+  assert.equal(elevationAt(elevations, 4), 3);
+  assert.equal(elevationAt(elevations, 12), 12);
+});
+
 test("builds lane polygon from centerline offsets", () => {
   const centerline = [
-    { x: 0, y: 0, hdg: 0, s: 0 },
-    { x: 10, y: 0, hdg: 0, s: 10 },
+    { x: 0, y: 0, z: 1, hdg: 0, s: 0 },
+    { x: 10, y: 0, z: 3, hdg: 0, s: 10 },
   ];
   const polygon = lanePolygonFromCenterline(centerline, 0, 3.5);
   assert.equal(polygon.length, 4);
-  assert.deepEqual(polygon[0], { x: 0, y: 0, hdg: 0, s: 0 });
+  assert.deepEqual(polygon[0], { x: 0, y: 0, z: 1, hdg: 0, s: 0 });
   assert.equal(polygon[2].y, 3.5);
+  assert.equal(polygon[2].z, 3);
   assert.ok(polygonContains({ x: 5, y: 1 }, polygon));
   assert.equal(polygonContains({ x: 5, y: -1 }, polygon), false);
 });

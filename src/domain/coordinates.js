@@ -28,7 +28,7 @@ export class CoordinateFormatter {
         return {
           longitude: round(lonLat.longitude, 8),
           latitude: round(lonLat.latitude, 8),
-          altitude: pointHeight(point),
+          altitude: pointHeight(lonLat),
           ...(Number.isFinite(point.hdg) ? { hdg: round(point.hdg, 6) } : {}),
           ...(Number.isFinite(point.s) ? { s: round(point.s, 3) } : {}),
         };
@@ -67,6 +67,7 @@ function projectedPoint(point) {
 
 function pointHeight(point) {
   if (Number.isFinite(point.z)) return round(point.z, 3);
+  if (Number.isFinite(point.altitude)) return round(point.altitude, 3);
   if (Number.isFinite(point.height)) return round(point.height, 3);
   return 0;
 }
@@ -112,8 +113,9 @@ function createProjection(header) {
   try {
     const source = proj4(geoReference);
     const toLonLat = (point) => {
-      const [longitude, latitude] = proj4(source, WGS84_PROJ, [point.x + offset.x, point.y + offset.y]);
-      return { longitude, latitude };
+      const [, , inputZ] = pointTuple(point, offset);
+      const [longitude, latitude, altitude = inputZ] = proj4(source, WGS84_PROJ, pointTuple(point, offset));
+      return { longitude, latitude, altitude };
     };
     const toLocal = (longitude, latitude) => {
       const [x, y] = proj4(WGS84_PROJ, source, [longitude, latitude]);
@@ -134,6 +136,10 @@ function normalizeGeoReference(value) {
 function finiteNumber(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function pointTuple(point, offset) {
+  return [point.x + offset.x, point.y + offset.y, pointHeight(point)];
 }
 
 function isValidLonLat(point) {
