@@ -1,5 +1,6 @@
 import { WasmBackedOpenDriveParser } from "./wasmParser.js";
 import { OpenDriveParser } from "./odrParser.js";
+import { decodeOpenDriveInput } from "./parserWorkerProtocol.js";
 
 export class WorkerBackedOpenDriveParser {
   constructor() {
@@ -29,10 +30,7 @@ export class WorkerBackedOpenDriveParser {
 
   parseOnMainThread(input, fileName) {
     this.mode = "main-thread";
-    if (input instanceof ArrayBuffer) {
-      return this.fallback.parse(new TextDecoder("utf-8").decode(input), fileName);
-    }
-    return this.fallback.parse(input, fileName);
+    return this.fallback.parse(decodeOpenDriveInput(input), fileName);
   }
 
   ensureWorker() {

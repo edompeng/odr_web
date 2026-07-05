@@ -270,6 +270,29 @@ test("parser worker returns decoded XML when WASM parsing fails", async () => {
   assert.equal(response.message, "OOM");
 });
 
+test("parser worker decodes ArrayBuffer inputs through a byte view", async () => {
+  const bytes = new TextEncoder().encode("<OpenDRIVE/>");
+  const response = await parseParserWorkerRequest(
+    { id: 9, fileName: "resizable.xodr", buffer: bytes.buffer },
+    {
+      mode: "test",
+      parse(xml, fileName) {
+        assert.equal(xml, "<OpenDRIVE/>");
+        return { fileName };
+      },
+    },
+    {
+      decode(input) {
+        assert.equal(input instanceof Uint8Array, true);
+        return new TextDecoder("utf-8").decode(input);
+      },
+    },
+  );
+
+  assert.equal(response.ok, true);
+  assert.deepEqual(response.map, { fileName: "resizable.xodr" });
+});
+
 test("parser worker does not return very large XML to the main thread", async () => {
   const response = await parseParserWorkerRequest(
     { id: 8, fileName: "huge.xodr", text: "<OpenDRIVE/>" },
