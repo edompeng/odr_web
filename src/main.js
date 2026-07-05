@@ -1,6 +1,8 @@
 import { WorkerBackedOpenDriveParser } from "./domain/workerParser.js";
-import { CoordinateFormatter } from "./domain/coordinates.js";
+import { CoordinateFormatter, parseCoordinateInput } from "./domain/coordinates.js";
 import { formatMeters } from "./domain/math.js";
+import { loadViewerSettings, saveViewerSettings } from "./domain/viewerSettings.js";
+import { validateOpenDriveMap } from "./domain/topologyValidator.js";
 import { CanvasRenderer } from "./render/canvasRenderer.js";
 import { buildTreeNodes, describeHit, filterTreeNodes, hitTitle } from "./ui/treeModel.js";
 
@@ -47,16 +49,21 @@ class OdrViewerApp {
     this.parser = new WorkerBackedOpenDriveParser();
     this.renderer = new CanvasRenderer(document.querySelector("#mapCanvas"));
     this.coordinateFormatter = new CoordinateFormatter();
+    this.settings = loadViewerSettings();
     this.treeNodes = [];
     this.expandedTreeNodes = new Set();
     this.selectedHit = null;
+    this.validationIssues = [];
+    this.currentMap = null;
+    this.currentFileName = "";
     this.isDragging = false;
     this.lastPointer = null;
     this.measureMode = false;
     this.loadGeneration = 0;
     this.bindUi();
     this.populateLayers();
-    this.setCoordinateMode("utm");
+    this.setCoordinateMode(this.settings.coordinateMode, false);
+    this.renderFavorites();
     void this.loadText(SAMPLE_ODR, "sample.xodr");
     window.addEventListener("resize", () => this.renderer.resize());
   }
@@ -73,6 +80,10 @@ class OdrViewerApp {
       view3dButton: document.querySelector("#view3dButton"),
       coordUtmButton: document.querySelector("#coordUtmButton"),
       coordLonLatButton: document.querySelector("#coordLonLatButton"),
+      coordinateInput: document.querySelector("#coordinateInput"),
+      jumpButton: document.querySelector("#jumpButton"),
+      addPointButton: document.querySelector("#addPointButton"),
+      clearPointsButton: document.querySelector("#clearPointsButton"),
       measureToggle: document.querySelector("#measureToggle"),
       layerList: document.querySelector("#layerList"),
       treeList: document.querySelector("#treeList"),
@@ -83,6 +94,12 @@ class OdrViewerApp {
       detailsTitle: document.querySelector("#detailsTitle"),
       detailsContent: document.querySelector("#detailsContent"),
       clearSelectionButton: document.querySelector("#clearSelectionButton"),
+      statsContent: document.querySelector("#statsContent"),
+      validateButton: document.querySelector("#validateButton"),
+      validationList: document.querySelector("#validationList"),
+      favoritesList: document.querySelector("#favoritesList"),
+      clearFavoritesButton: document.querySelector("#clearFavoritesButton"),
+      contextMenu: document.querySelector("#contextMenu"),
       canvas: document.querySelector("#mapCanvas"),
     };
 
@@ -94,6 +111,14 @@ class OdrViewerApp {
     this.el.view3dButton.addEventListener("click", () => this.setViewMode("3d"));
     this.el.coordUtmButton.addEventListener("click", () => this.setCoordinateMode("utm"));
     this.el.coordLonLatButton.addEventListener("click", () => this.setCoordinateMode("lonlat"));
+    this.el.jumpButton.addEventListener("click", () => this.jumpToCoordinate());
+    this.el.addPointButton.addEventListener("click", () => this.addCoordinatePoints());
+    this.el.clearPointsButton.addEventListener("click", () => this.clearCoordinatePoints());
+    this.el.validateButton.addEventListener("click", () => this.runValidation());
+    this.el.clearFavoritesButton.addEventListener("click", () => this.clearFavorites());
+    this.el.coordinateInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") this.jumpToCoordinate();
+    });
     this.el.measureToggle.addEventListener("change", () => {
       this.measureMode = this.el.measureToggle.checked;
       if (!this.measureMode) this.renderer.clearMeasure();
@@ -116,6 +141,7 @@ class OdrViewerApp {
     }
 
     this.bindCanvas();
+    window.addEventListener("click", () => this.hideContextMenu());
   }
 
   bindCanvas() {
@@ -154,6 +180,10 @@ class OdrViewerApp {
       const hit = this.renderer.pick({ x: event.offsetX, y: event.offsetY });
       if (hit) this.renderer.centerOnHit(hit);
     });
+    canvas.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      this.showContextMenu(event);
+    });
     canvas.addEventListener(
       "wheel",
       (event) => {
@@ -173,8 +203,13 @@ class OdrViewerApp {
         text.textContent = layer.label;
         const input = document.createElement("input");
         input.type = "checkbox";
-        input.checked = layer.visible;
-        input.addEventListener("change", () => this.renderer.setLayerVisible(layer.id, input.checked));
+        input.checked = this.settings.layers[layer.id] ?? layer.visible;
+        this.renderer.setLayerVisible(layer.id, input.checked);
+        input.addEventListener("change", () => {
+          this.renderer.setLayerVisible(layer.id, input.checked);
+          this.settings.layers[layer.id] = input.checked;
+          this.saveSettings();
+        });
         label.append(text, input);
         return label;
       }),
@@ -194,12 +229,17 @@ class OdrViewerApp {
       this.el.mapStatus.textContent = `${fileName} | 后台解析中...`;
       const map = await this.parser.parse(text, fileName);
       if (generation !== this.loadGeneration) return;
+      this.currentMap = map;
+      this.currentFileName = fileName;
       this.coordinateFormatter.setMap(map);
-      this.setCoordinateMode(this.coordinateFormatter.mode);
+      this.setCoordinateMode(this.settings.coordinateMode, false);
       this.renderer.setMap(map);
       this.treeNodes = buildTreeNodes(map);
       this.expandedTreeNodes = new Set(this.treeNodes.map((node) => node.id));
       this.renderTree();
+      this.updateStats();
+      this.runValidation();
+      this.renderFavorites();
       this.selectHit(null);
       this.updateMeasureStatus();
       this.el.mapStatus.textContent =
@@ -225,6 +265,7 @@ class OdrViewerApp {
     row.className = "tree-item";
     row.role = "treeitem";
     row.style.setProperty("--tree-depth", depth);
+    if (node.hit && !this.renderer.isElementVisible(node.id)) row.classList.add("muted");
     const hasChildren = (node.children?.length ?? 0) > 0;
     const expanded = forceExpanded || this.expandedTreeNodes.has(node.id);
     row.setAttribute("aria-expanded", hasChildren ? String(expanded) : "false");
@@ -247,7 +288,20 @@ class OdrViewerApp {
     const label = document.createElement("span");
     label.className = "tree-label";
     label.textContent = node.label;
-    row.append(toggle, kind, label);
+    const visibility = document.createElement("button");
+    visibility.className = "tree-visibility";
+    visibility.type = "button";
+    visibility.textContent = node.hit && !this.renderer.isElementVisible(node.id) ? "◌" : "●";
+    visibility.disabled = !node.hit;
+    visibility.title = node.hit ? "显示/隐藏元素" : "";
+    visibility.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const next = !this.renderer.isElementVisible(node.id);
+      this.renderer.setElementVisible(node.id, next);
+      if (!next && hitIdentity(this.selectedHit) === node.id) this.selectHit(null);
+      this.renderTree();
+    });
+    row.append(toggle, kind, label, visibility);
     if (node.hit) {
       row.addEventListener("click", () => {
         this.selectHit(node.hit);
@@ -279,7 +333,7 @@ class OdrViewerApp {
     this.el.hoverStatus.textContent = `${prefix}${this.coordinateFormatter.status(world)}`;
   }
 
-  setCoordinateMode(mode) {
+  setCoordinateMode(mode, persist = true) {
     this.coordinateFormatter.setMode(mode);
     this.el.coordUtmButton.classList.toggle("active", this.coordinateFormatter.mode === "utm");
     this.el.coordLonLatButton.classList.toggle("active", this.coordinateFormatter.mode === "lonlat");
@@ -287,7 +341,203 @@ class OdrViewerApp {
     this.el.coordLonLatButton.title = this.coordinateFormatter.canUseLonLat()
       ? ""
       : "geoReference 未提供 UTM 投影";
+    if (persist) {
+      this.settings.coordinateMode = this.coordinateFormatter.mode;
+      this.saveSettings();
+    }
     this.selectHit(this.selectedHit);
+  }
+
+  jumpToCoordinate() {
+    const [first] = parseCoordinateInput(this.el.coordinateInput.value);
+    if (!first) {
+      this.el.mapStatus.textContent = "坐标格式无效，请输入 x,y 或 lon,lat";
+      return;
+    }
+    const world = this.coordinateFormatter.worldPoint(first);
+    this.renderer.centerOnPoint(world);
+    this.el.hoverStatus.textContent = this.coordinateFormatter.status(world);
+  }
+
+  addCoordinatePoints() {
+    const points = parseCoordinateInput(this.el.coordinateInput.value);
+    if (points.length === 0) {
+      this.el.mapStatus.textContent = "坐标格式无效，请输入 x,y 或 lon,lat，可用 ; 分隔多个点";
+      return;
+    }
+    points.forEach((point, index) => {
+      this.renderer.addUserPoint(this.coordinateFormatter.worldPoint(point), `P${index + 1}`);
+    });
+    this.el.mapStatus.textContent = `已添加 ${points.length} 个坐标点`;
+  }
+
+  clearCoordinatePoints() {
+    this.renderer.clearUserPoints();
+    this.el.mapStatus.textContent = "坐标点已清空";
+  }
+
+  updateStats() {
+    if (!this.currentMap) {
+      this.el.statsContent.textContent = "未加载地图";
+      return;
+    }
+    const stats = this.currentMap.stats;
+    this.el.statsContent.textContent = [
+      `roads: ${stats.roads}`,
+      `lanes: ${stats.lanes}`,
+      `objects: ${stats.objects}`,
+      `signals: ${stats.signals}`,
+      `junctions: ${stats.junctions}`,
+      `length: ${formatMeters(stats.lengthMeters)}`,
+    ].join("\n");
+  }
+
+  runValidation() {
+    this.validationIssues = validateOpenDriveMap(this.currentMap);
+    this.renderValidation();
+  }
+
+  renderValidation() {
+    if (!this.currentMap) {
+      this.el.validationList.textContent = "未加载地图";
+      return;
+    }
+    if (this.validationIssues.length === 0) {
+      this.el.validationList.textContent = "未发现明显问题";
+      return;
+    }
+    this.el.validationList.replaceChildren(
+      ...this.validationIssues.slice(0, 80).map((issue) => {
+        const row = document.createElement("div");
+        row.className = `compact-row ${issue.severity}`;
+        const label = document.createElement("span");
+        label.textContent = `${issue.severity}: ${issue.message}`;
+        row.append(label);
+        if (issue.hit) {
+          row.addEventListener("click", () => {
+            const hit = this.resolveHit(hitIdentity(issue.hit)) ?? issue.hit;
+            this.selectHit(hit);
+            this.renderer.centerOnHit(hit);
+          });
+        }
+        return row;
+      }),
+    );
+  }
+
+  addFavorite(hit) {
+    const id = hitIdentity(hit);
+    if (!id) return;
+    const title = hitTitle(hit);
+    this.settings.favorites = [{ id, title }, ...this.settings.favorites.filter((favorite) => favorite.id !== id)].slice(
+      0,
+      200,
+    );
+    this.saveSettings();
+    this.renderFavorites();
+  }
+
+  removeFavorite(id) {
+    this.settings.favorites = this.settings.favorites.filter((favorite) => favorite.id !== id);
+    this.saveSettings();
+    this.renderFavorites();
+  }
+
+  clearFavorites() {
+    this.settings.favorites = [];
+    this.saveSettings();
+    this.renderFavorites();
+  }
+
+  renderFavorites() {
+    if (this.settings.favorites.length === 0) {
+      this.el.favoritesList.textContent = "暂无收藏";
+      return;
+    }
+    this.el.favoritesList.replaceChildren(
+      ...this.settings.favorites.map((favorite) => {
+        const row = document.createElement("div");
+        row.className = "compact-row";
+        const label = document.createElement("span");
+        label.textContent = favorite.title;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.title = "移除收藏";
+        remove.textContent = "×";
+        remove.addEventListener("click", (event) => {
+          event.stopPropagation();
+          this.removeFavorite(favorite.id);
+        });
+        row.addEventListener("click", () => {
+          const hit = this.resolveHit(favorite.id);
+          if (!hit) {
+            this.el.mapStatus.textContent = `${favorite.title} 在当前地图中不存在`;
+            return;
+          }
+          this.selectHit(hit);
+          this.renderer.centerOnHit(hit);
+        });
+        row.append(label, remove);
+        return row;
+      }),
+    );
+  }
+
+  showContextMenu(event) {
+    const hit = this.renderer.pick({ x: event.offsetX, y: event.offsetY });
+    const world = this.renderer.screenToWorld({ x: event.offsetX, y: event.offsetY });
+    const menu = this.el.contextMenu;
+    const actions = [
+      ["复制坐标", () => this.copyText(this.coordinateFormatter.status(world))],
+      ["添加坐标点", () => this.renderer.addUserPoint(world, "ctx")],
+    ];
+    if (hit) {
+      actions.unshift(["定位元素", () => this.renderer.centerOnHit(hit)]);
+      actions.push(["添加收藏", () => this.addFavorite(hit)]);
+      actions.push(["复制元素信息", () => this.copyText(describeHit(hit, this.coordinateFormatter))]);
+      actions.push(["隐藏元素", () => {
+        this.renderer.setElementVisible(hitIdentity(hit), false);
+        this.selectHit(null);
+        this.renderTree();
+      }]);
+    }
+    if (this.currentFileName) {
+      actions.push(["复制地图名", () => this.copyText(this.currentFileName.replace(/\.[^.]+$/, ""))]);
+    }
+    menu.replaceChildren(
+      ...actions.map(([label, action]) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.addEventListener("click", () => {
+          action();
+          this.hideContextMenu();
+        });
+        return button;
+      }),
+    );
+    menu.hidden = false;
+    menu.style.left = `${event.offsetX}px`;
+    menu.style.top = `${event.offsetY}px`;
+  }
+
+  hideContextMenu() {
+    this.el.contextMenu.hidden = true;
+  }
+
+  async copyText(text) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.append(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
   }
 
   updateMeasureStatus() {
@@ -300,6 +550,46 @@ class OdrViewerApp {
     link.href = this.renderer.exportPng();
     link.click();
   }
+
+  resolveHit(id) {
+    if (!this.currentMap || !id) return null;
+    if (id.startsWith("road:")) {
+      const roadId = id.slice("road:".length);
+      const road = this.currentMap.roads.find((candidate) => String(candidate.id) === roadId);
+      return road ? { kind: "road", road } : null;
+    }
+    if (id.startsWith("lane:")) {
+      const key = id.slice("lane:".length);
+      for (const road of this.currentMap.roads) {
+        const lane = road.lanes.find((candidate) => candidate.key === key);
+        if (lane) return { kind: "lane", road, lane };
+      }
+    }
+    if (id.startsWith("object:")) {
+      const key = id.slice("object:".length);
+      const object = this.currentMap.objects.find((candidate) => candidate.key === key);
+      return object ? { kind: "object", object } : null;
+    }
+    if (id.startsWith("signal:")) {
+      const key = id.slice("signal:".length);
+      const signal = this.currentMap.signals.find((candidate) => candidate.key === key);
+      return signal ? { kind: "signal", signal } : null;
+    }
+    return null;
+  }
+
+  saveSettings() {
+    saveViewerSettings(this.settings);
+  }
 }
 
 new OdrViewerApp();
+
+function hitIdentity(hit) {
+  if (!hit) return "";
+  if (hit.kind === "lane") return `lane:${hit.lane.key}`;
+  if (hit.kind === "road") return `road:${hit.road.id}`;
+  if (hit.kind === "signal") return `signal:${hit.signal.key}`;
+  if (hit.kind === "object") return `object:${hit.object.key}`;
+  return hit.kind;
+}

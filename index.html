@@ -44,6 +44,39 @@
         </section>
 
         <section class="tool-block">
+          <h2>坐标</h2>
+          <div class="input-row">
+            <input id="coordinateInput" class="search-input" type="text" placeholder="x,y,z / lon,lat,alt" />
+          </div>
+          <div class="button-row">
+            <button id="jumpButton" type="button">跳转</button>
+            <button id="addPointButton" type="button">添加点</button>
+          </div>
+          <button id="clearPointsButton" type="button">清空坐标点</button>
+        </section>
+
+        <section class="tool-block stats-block">
+          <h2>地图统计</h2>
+          <pre id="statsContent">未加载地图</pre>
+        </section>
+
+        <section class="tool-block compact-list-block">
+          <div class="section-title-row">
+            <h2>拓扑校验</h2>
+            <button id="validateButton" class="mini-button" type="button">检查</button>
+          </div>
+          <div id="validationList" class="compact-list">未检查</div>
+        </section>
+
+        <section class="tool-block compact-list-block">
+          <div class="section-title-row">
+            <h2>收藏</h2>
+            <button id="clearFavoritesButton" class="mini-button" type="button">清空</button>
+          </div>
+          <div id="favoritesList" class="compact-list">暂无收藏</div>
+        </section>
+
+        <section class="tool-block">
           <h2>图层</h2>
           <div id="layerList" class="layer-list"></div>
         </section>
@@ -70,6 +103,7 @@
           </div>
           <pre id="detailsContent">选择道路、车道、对象或信号后显示属性。</pre>
         </section>
+        <div id="contextMenu" class="context-menu" hidden></div>
       </section>
     </main>
     <script type="module" src="./src/main.js"></script>

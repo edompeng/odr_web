@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CoordinateFormatter } from "../src/domain/coordinates.js";
+import { CoordinateFormatter, parseCoordinateInput } from "../src/domain/coordinates.js";
+import { createDefaultSettings, mergeViewerSettings } from "../src/domain/viewerSettings.js";
 import {
   boundsOf,
   hasValidBounds,
@@ -18,6 +19,7 @@ import {
   segmentPolylineByS,
   widthAt,
 } from "../src/domain/opendriveGeometry.js";
+import { validateOpenDriveMap } from "../src/domain/topologyValidator.js";
 
 test("samples line geometry at expected endpoints", () => {
   const geometry = { s: 0, x: 10, y: -4, hdg: 0, length: 20, kind: "line", data: {} };
@@ -103,6 +105,18 @@ test("coordinate formatter supports Transverse Mercator geoReference", () => {
   assert.equal(formatter.canUseLonLat(), true);
   assert.ok(Math.abs(point.longitude - 117) < 1e-6);
   assert.ok(Math.abs(point.latitude) < 1e-6);
+
+  const world = formatter.worldPoint({ x: 117, y: 0 });
+  assert.ok(Math.abs(world.x - 500000) < 1e-6);
+  assert.ok(Math.abs(world.y) < 1e-6);
+});
+
+test("coordinate input parser accepts comma, space, and semicolon separated points", () => {
+  assert.deepEqual(parseCoordinateInput("1,2; (3 4 5); bad; 6,7"), [
+    { x: 1, y: 2, z: 0 },
+    { x: 3, y: 4, z: 5 },
+    { x: 6, y: 7, z: 0 },
+  ]);
 });
 
 test("segments reference line and supports variable lane offsets", () => {
@@ -120,4 +134,45 @@ test("segments reference line and supports variable lane offsets", () => {
   assert.equal(polygon.length, 6);
   assert.equal(polygon[3].y, 4);
   assert.ok(polygonContains({ x: 10, y: 2 }, polygon));
+});
+
+test("topology validator reports invalid roads and degenerate lane geometry", () => {
+  const issues = validateOpenDriveMap({
+    roads: [
+      {
+        id: "r1",
+        name: "broken",
+        length: 0,
+        referenceLine: [{ x: 0, y: 0 }],
+        lanes: [
+          { key: "r1:-1:0", laneId: -1, laneType: "driving", polygon: [{ x: 0, y: 0 }], centerline: [] },
+          { key: "r1:0:0", laneId: 0, laneType: "none", polygon: [], centerline: [] },
+        ],
+        objects: [],
+        signals: [],
+      },
+    ],
+    objects: [{ key: "orphan", id: "o1", roadId: "missing", point: null }],
+    signals: [{ key: "s1", id: "sig", roadId: "r1", point: { x: NaN, y: 0 } }],
+  });
+
+  assert.equal(issues.some((issue) => issue.severity === "error" && issue.code === "road.referenceLine.short"), true);
+  assert.equal(issues.some((issue) => issue.code === "lane.polygon.short" && issue.hit.kind === "lane"), true);
+  assert.equal(issues.some((issue) => issue.code === "object.road.missing"), true);
+  assert.equal(issues.some((issue) => issue.code === "signal.point.invalid"), true);
+});
+
+test("viewer settings merge persisted values without trusting unknown keys", () => {
+  const settings = mergeViewerSettings({
+    coordinateMode: "lonlat",
+    layers: { lanes: false, signals: true, unknown: false },
+    favorites: [{ id: "road:1", title: "Road 1" }, { id: "", title: "bad" }],
+  });
+
+  assert.deepEqual(settings, {
+    ...createDefaultSettings(),
+    coordinateMode: "lonlat",
+    layers: { lanes: false, signals: true },
+    favorites: [{ id: "road:1", title: "Road 1" }],
+  });
 });

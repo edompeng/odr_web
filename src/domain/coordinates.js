@@ -47,10 +47,29 @@ export class CoordinateFormatter {
     }
     return `E: ${display.easting.toFixed(3)}, N: ${display.northing.toFixed(3)}`;
   }
+
+  worldPoint(values) {
+    const z = Number.isFinite(values.z) ? values.z : 0;
+    if (this.mode === "lonlat" && this.projection) {
+      const projected = lonLatToTransverseMercator(values.x, values.y, this.projection);
+      return { x: projected.x, y: projected.y, z };
+    }
+    return { x: values.x, y: values.y, z };
+  }
 }
 
 export function serializeWithDisplayCoordinates(value, formatter) {
   return JSON.stringify(toDisplayCoordinates(value, formatter), null, 2);
+}
+
+export function parseCoordinateInput(text) {
+  return text
+    .split(";")
+    .map((part) => part.trim().replace(/^\(/, "").replace(/\)$/, ""))
+    .filter(Boolean)
+    .map((part) => part.split(/[,\s]+/).filter(Boolean).map(Number))
+    .filter((values) => values.length >= 2 && values.length <= 3 && values.every(Number.isFinite))
+    .map(([x, y, z = 0]) => ({ x, y, z }));
 }
 
 function toDisplayCoordinates(value, formatter) {
@@ -149,6 +168,34 @@ function transverseMercatorToLonLat(easting, northing, projection) {
     longitude: longitude * (180 / Math.PI),
     latitude: latitude * (180 / Math.PI),
   };
+}
+
+function lonLatToTransverseMercator(longitude, latitude, projection) {
+  const lon = longitude * (Math.PI / 180);
+  const lat = latitude * (Math.PI / 180);
+  const ep2 = WGS84_E2 / (1 - WGS84_E2);
+  const n = WGS84_A / Math.sqrt(1 - WGS84_E2 * Math.sin(lat) ** 2);
+  const t = Math.tan(lat) ** 2;
+  const c = ep2 * Math.cos(lat) ** 2;
+  const a = (lon - projection.longitudeOrigin) * Math.cos(lat);
+  const m = meridionalArc(lat) - meridionalArc(projection.latitudeOrigin);
+  const x =
+    projection.falseEasting +
+    projection.scale *
+      n *
+      (a +
+        ((1 - t + c) * a ** 3) / 6 +
+        ((5 - 18 * t + t ** 2 + 72 * c - 58 * ep2) * a ** 5) / 120);
+  const y =
+    projection.falseNorthing +
+    projection.scale *
+      (m +
+        n *
+          Math.tan(lat) *
+          (a ** 2 / 2 +
+            ((5 - t + 9 * c + 4 * c ** 2) * a ** 4) / 24 +
+            ((61 - 58 * t + t ** 2 + 600 * c - 330 * ep2) * a ** 6) / 720));
+  return { x, y };
 }
 
 function meridionalArc(latitude) {

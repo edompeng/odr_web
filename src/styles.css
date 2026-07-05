@@ -103,6 +103,19 @@ button:hover {
   text-transform: uppercase;
 }
 
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mini-button {
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
 .file-drop {
   display: grid;
   min-height: 72px;
@@ -122,6 +135,11 @@ button:hover {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.input-row {
+  display: grid;
+  grid-template-columns: 1fr;
 }
 
 .segmented {
@@ -186,7 +204,7 @@ button:hover {
 
 .tree-item {
   display: grid;
-  grid-template-columns: 18px 44px minmax(0, 1fr);
+  grid-template-columns: 18px 44px minmax(0, 1fr) 20px;
   gap: 6px;
   align-items: center;
   min-height: 30px;
@@ -195,6 +213,10 @@ button:hover {
   color: var(--text);
   cursor: pointer;
   font-size: 13px;
+}
+
+.tree-item.muted {
+  color: #6f7d8b;
 }
 
 .tree-item:hover,
@@ -220,6 +242,22 @@ button:hover {
 }
 
 .tree-toggle:disabled {
+  cursor: default;
+}
+
+.tree-visibility {
+  width: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  padding: 0;
+  font-size: 11px;
+}
+
+.tree-visibility:disabled {
+  color: transparent;
   cursor: default;
 }
 
@@ -309,6 +347,91 @@ button:hover {
   color: #d8e1e8;
   font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
+}
+
+.stats-block pre {
+  max-height: 120px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #151922;
+  padding: 10px;
+  color: #d8e1e8;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.compact-list {
+  max-height: 118px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #151922;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.compact-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 30px;
+  border-bottom: 1px solid rgba(57, 65, 78, 0.45);
+  padding: 4px 8px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.compact-row:last-child {
+  border-bottom: 0;
+}
+
+.compact-row:hover {
+  background: #26313d;
+}
+
+.compact-row.warning {
+  color: #ffd580;
+}
+
+.compact-row.error {
+  color: #ffb0ad;
+}
+
+.compact-row button {
+  width: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+}
+
+.context-menu {
+  position: absolute;
+  z-index: 10;
+  min-width: 160px;
+  border: 1px solid rgba(76, 88, 105, 0.95);
+  border-radius: 8px;
+  background: rgba(28, 32, 40, 0.98);
+  padding: 4px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.34);
+}
+
+.context-menu button {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.context-menu button:hover {
+  background: #26313d;
 }
 
 @media (max-width: 860px) {
